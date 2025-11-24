@@ -5,6 +5,7 @@ __pycache__/
 .cursor
 # C extensions
 *.so
+.cursor/
 
 # Distribution / packaging
 .Python

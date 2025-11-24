@@ -123,9 +123,9 @@ class MultiLLMRequest(BaseModel):
         description="The prompt to send to all LLM providers"
     )
     adapter_ids: List[str] = Field(
-        default=["openai"],
+        default=["openai", "gemini"],
         min_length=1,
-        description="List of adapter/provider IDs to query (e.g., ['openai', 'gemini'])",
+        description="List of adapter/provider IDs to query. All adapters run simultaneously in parallel.",
     )
 
 

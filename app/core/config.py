@@ -48,10 +48,11 @@ class AdapterSettings(BaseSettings):
     provider: Literal["mock", "openai"] = "mock"
     timeout_seconds: int = 30
     max_retries: int = 2
-    # API keys can be set via environment variables (OPENAI_API_KEY, GOOGLE_API_KEY)
-    # or via prefixed settings (ADAPTER_OPENAI_API_KEY, ADAPTER_GOOGLE_API_KEY)
+    # API keys can be set via environment variables (OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY)
+    # or via prefixed settings (ADAPTER_OPENAI_API_KEY, ADAPTER_GOOGLE_API_KEY, ADAPTER_GEMINI_API_KEY)
     openai_api_key: str | None = None
     google_api_key: str | None = None
+    gemini_api_key: str | None = None
 
 
 class AppSettings(BaseSettings):
