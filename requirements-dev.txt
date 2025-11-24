@@ -1,0 +1,11 @@
+# Project W - Development Dependencies
+# Include production dependencies plus dev tools
+
+-r requirements.txt
+
+# Development tools
+pytest>=8.2.2
+pytest-asyncio>=0.23.7
+ruff>=0.4.8
+mypy>=1.10.1
+

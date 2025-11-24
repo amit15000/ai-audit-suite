@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, List
 
-from app.models import SafetyFinding, SafetyResult
+from app.domain.schemas import SafetyFinding, SafetyResult
 
 
 class SafetyChecker:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List
 
 import structlog
 
 from app.adapters.base import AdapterRegistry
-from app.models import (
+from app.domain.schemas import (
     AdapterAuditArtifact,
     AdapterResponse,
     AuditRequest,
@@ -29,11 +30,12 @@ class AuditService:
         self._object_store = ObjectStoreClient()
         self._relational_store = RelationalStore()
 
-    def execute(self, request: AuditRequest) -> AuditResponse:
+    async def execute_async(self, request: AuditRequest) -> AuditResponse:
+        """Async execution of audit request."""
         AUDIT_REQUESTS_TOTAL.inc()
 
         with AUDIT_LATENCY_SECONDS.time():
-            adapter_outputs = self._fan_out(request)
+            adapter_outputs = await self._fan_out_async(request)
             artifacts = self._process_outputs(request, adapter_outputs)
             consensus = self._consensus.build(artifacts)
 
@@ -42,22 +44,67 @@ class AuditService:
                 status="completed",
                 artifacts=artifacts,
                 consensus=consensus,
-                metadata=request.metadata,
             )
 
             self._persist_audit(response)
             return response
 
-    def _fan_out(self, request: AuditRequest) -> List[AdapterResponse]:
-        results: List[AdapterResponse] = []
-        for invocation in request.adapters:
-            adapter = AdapterRegistry.get(invocation.adapter_id)
+    def execute(self, request: AuditRequest) -> AuditResponse:
+        """Sync wrapper for async execution."""
+        return asyncio.run(self.execute_async(request))
+
+    async def _fan_out_async(self, request: AuditRequest) -> List[AdapterResponse]:
+        """Execute all adapters in parallel."""
+        from app.domain.schemas import AdapterInvocation
+        
+        # Create tasks for all adapters
+        tasks = []
+        for adapter_id in request.adapters:
+            adapter = AdapterRegistry.get(adapter_id)
             if not adapter:
-                raise ValueError(f"Adapter {invocation.adapter_id} not registered.")
-            logger.info("adapter.invoke", adapter=invocation.adapter_id)
-            result = adapter.run(invocation)
-            results.append(result)
-        return results
+                raise ValueError(f"Adapter {adapter_id} not registered.")
+            
+            logger.info("adapter.invoke", adapter=adapter_id)
+            invocation = AdapterInvocation(
+                adapter_id=adapter_id,
+                instructions=request.prompt
+            )
+            # Create async task
+            task = adapter.run_async(invocation)
+            tasks.append(task)
+        
+        # Execute all adapters in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any exceptions
+        adapter_outputs: List[AdapterResponse] = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error("adapter.error", adapter=request.adapters[i], error=str(result))
+                # Create error response
+                adapter_outputs.append(AdapterResponse(
+                    adapter_id=request.adapters[i],
+                    text="",
+                    tokens=0,
+                    latency_ms=0,
+                    raw={"error": str(result)},
+                    error=str(result),
+                ))
+            elif isinstance(result, AdapterResponse):
+                adapter_outputs.append(result)
+            else:
+                # Fallback for unexpected types
+                logger.error("adapter.unexpected_result", adapter=request.adapters[i], result_type=type(result).__name__)
+                adapter_outputs.append(AdapterResponse(
+                    adapter_id=request.adapters[i],
+                    text="",
+                    tokens=0,
+                    latency_ms=0,
+                    raw={"error": "Unexpected result type"},
+                    error="Unexpected result type",
+                ))
+        
+        return adapter_outputs
 
     def _process_outputs(
         self, request: AuditRequest, outputs: List[AdapterResponse]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.models import (
+from app.domain.schemas import (
     AdapterAuditArtifact,
     ConsensusContributor,
     ConsensusOutput,

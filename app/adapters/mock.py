@@ -1,23 +1,28 @@
+import asyncio
 import time
 from typing import Dict
 
 from app.adapters.base import AdapterRegistry, BaseAdapter
-from app.models import AdapterInvocation, AdapterResponse
+from app.domain.schemas import AdapterInvocation, AdapterResponse
 
 
 class MockAdapter(BaseAdapter):
     name = "mock"
 
-    def invoke(self, invocation: AdapterInvocation) -> AdapterResponse:
+    async def invoke_async(self, invocation: AdapterInvocation) -> AdapterResponse:
+        """Mock adapter with simulated latency."""
         started = time.perf_counter()
+        # Simulate some processing time
+        await asyncio.sleep(0.1)
+        
         synthetic = (
-            f"[mock:{invocation.adapter_id}] Processed instructions: "
+            f"[mock:{invocation.adapter_id}] Processed prompt: "
             f"{invocation.instructions[:128]}"
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_payload: Dict[str, str] = {
             "adapter_id": invocation.adapter_id,
-            "context": invocation.context or "",
+            "instructions": invocation.instructions,
         }
         return AdapterResponse(
             adapter_id=invocation.adapter_id,

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.config import get_settings
-from app.models import AdapterInvocation, AdapterResponse
-
-
-class AdapterError(Exception):
-    """Raised when adapter execution fails."""
+from app.core.config import get_settings
+from app.core.exceptions import AdapterError
+from app.domain.schemas import AdapterInvocation, AdapterResponse
 
 
 @dataclass
@@ -27,20 +25,42 @@ class BaseAdapter(ABC):
         settings = get_settings()
         self._max_retries = settings.adapter.max_retries
 
+    async def run_async(self, invocation: AdapterInvocation) -> AdapterResponse:
+        """Async wrapper with retry logic."""
+        try:
+            return await self.invoke_async(invocation)
+        except Exception as exc:  # noqa: BLE001
+            raise AdapterError(str(exc)) from exc
+
+    @abstractmethod
+    async def invoke_async(self, invocation: AdapterInvocation) -> AdapterResponse:
+        """Async method to invoke the adapter."""
+        ...
+
+    # Legacy sync support (for backward compatibility)
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
         reraise=True,
     )
     def run(self, invocation: AdapterInvocation) -> AdapterResponse:
+        """Sync wrapper - runs async method in event loop."""
         try:
-            return self.invoke(invocation)
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is already running, we need to use a different approach
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self.invoke_async(invocation))
+                    return future.result()
+            else:
+                return loop.run_until_complete(self.invoke_async(invocation))
         except Exception as exc:  # noqa: BLE001
             raise AdapterError(str(exc)) from exc
 
-    @abstractmethod
     def invoke(self, invocation: AdapterInvocation) -> AdapterResponse:
-        ...
+        """Sync invoke - delegates to async."""
+        return self.run(invocation)
 
 
 class AdapterRegistry:

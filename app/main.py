@@ -8,19 +8,14 @@ from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.config import AppSettings, get_settings
-from app.models import AuditRequest, AuditResponse
+from app.api.v1.routers import multi_llm
+from app.core import configure_logging, get_settings
+from app.core.config import AppSettings
+from app.domain.schemas import AuditRequest, AuditResponse
 from app.services.audit_service import AuditService
 from app.adapters import mock as _mock_adapter  # noqa: F401
-
-
-def configure_logging(level: str) -> None:
-    numeric_level = getattr(logging, level.upper(), logging.INFO)
-    logging.basicConfig(level=numeric_level)
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
-        processors=[structlog.processors.JSONRenderer()],
-    )
+from app.adapters import openai as _openai_adapter  # noqa: F401
+from app.adapters import gemini as _gemini_adapter  # noqa: F401
 
 
 def create_app(settings: AppSettings) -> FastAPI:
@@ -35,9 +30,12 @@ def create_app(settings: AppSettings) -> FastAPI:
     )
     service = AuditService()
 
+    # Include API routers
+    app.include_router(multi_llm.router)
+
     @app.post("/audit", response_model=AuditResponse)
-    def audit_endpoint(request: AuditRequest) -> AuditResponse:
-        return service.execute(request)
+    async def audit_endpoint(request: AuditRequest) -> AuditResponse:
+        return await service.execute_async(request)
 
     @app.get("/health")
     def health() -> Dict[str, Any]:

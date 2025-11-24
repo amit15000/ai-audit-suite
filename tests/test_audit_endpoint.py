@@ -9,15 +9,8 @@ client = TestClient(app)
 def test_audit_endpoint_returns_artifacts(tmp_path, monkeypatch):
     payload = {
         "job_id": "job-123",
-        "prompt": "Evaluate response",
-        "adapters": [
-            {
-                "adapter_id": "mock",
-                "instructions": "Explain the purpose of audits.",
-                "context": "testing",
-            }
-        ],
-        "metadata": {"source": "pytest"},
+        "prompt": "Explain the purpose of audits.",
+        "adapters": ["mock"],
     }
 
     response = client.post("/audit", json=payload)
