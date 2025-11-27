@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.v1.routers import multi_llm
+from app.api.v1.routers import auth, comparison, multi_llm, responses, ui
 from app.core import configure_logging, get_settings
 from app.core.config import AppSettings
 from app.domain.schemas import AuditRequest, AuditResponse
@@ -16,14 +16,18 @@ from app.services.audit_service import AuditService
 from app.adapters import mock as _mock_adapter  # noqa: F401
 from app.adapters import openai as _openai_adapter  # noqa: F401
 from app.adapters import gemini as _gemini_adapter  # noqa: F401
+from app.adapters import groq as _groq_adapter  # noqa: F401
+from app.adapters import huggingface as _huggingface_adapter  # noqa: F401
 
 
 def create_app(settings: AppSettings) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="Project W Audit API", version="0.1.0")
+    # CORS configuration
+    cors_origins = settings.cors_origins if hasattr(settings, "cors_origins") else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -31,7 +35,11 @@ def create_app(settings: AppSettings) -> FastAPI:
     service = AuditService()
 
     # Include API routers
+    app.include_router(auth.router)
+    app.include_router(comparison.router)
     app.include_router(multi_llm.router)
+    app.include_router(responses.router)
+    app.include_router(ui.router)
 
     @app.post("/audit", response_model=AuditResponse)
     async def audit_endpoint(request: AuditRequest) -> AuditResponse:

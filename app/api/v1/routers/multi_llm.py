@@ -35,7 +35,9 @@ _collector = MultiLLMCollector()
     
     **Available adapters:**
     - `openai`: OpenAI GPT models
-    - `gemini`: Google Gemini models
+    - `gemini`: Google Gemini models (free tier available)
+    - `groq`: Groq API (very fast, free tier available)
+    - `huggingface`: Hugging Face Inference API (free for many models)
     - `mock`: Mock adapter for testing
     """,
 )

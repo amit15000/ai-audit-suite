@@ -123,7 +123,7 @@ class MultiLLMRequest(BaseModel):
         description="The prompt to send to all LLM providers"
     )
     adapter_ids: List[str] = Field(
-        default=["openai", "gemini"],
+        default=["openai", "gemini", "groq", "huggingface"],
         min_length=1,
         description="List of adapter/provider IDs to query. All adapters run simultaneously in parallel.",
     )
@@ -154,3 +154,71 @@ class MultiLLMResponse(BaseModel):
     failed_responses: int = Field(..., description="Number of failed responses")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of the request")
 
+
+# Comparison API Schemas
+
+
+class SubmitComparisonRequest(BaseModel):
+    """Schema for submitting a comparison request."""
+
+    prompt: str = Field(..., description="The prompt to compare across platforms")
+    platforms: List[str] = Field(
+        default_factory=lambda: ["chatgpt", "gemini", "groq", "huggingface"],
+        description="List of platform IDs to compare (defaults to all available platforms)"
+    )
+    judge: str = Field(default="chatgpt", description="Platform ID to use as judge/evaluator")
+
+
+class AuditScore(BaseModel):
+    """Schema for individual audit score."""
+
+    name: str = Field(..., description="Score name (e.g., 'Hallucination Score')")
+    value: int = Field(..., ge=1, le=9, description="Score value (1-9)")
+    maxValue: int = Field(default=9, description="Maximum possible score")
+    category: str = Field(..., description="Category grouping (e.g., 'Accuracy', 'Safety')")
+    isCritical: bool = Field(..., description="True if value <= 4")
+
+
+class AuditorDetailedScores(BaseModel):
+    """Schema for detailed audit scores from an auditor."""
+
+    auditorId: str = Field(..., description="Platform ID (e.g., 'chatgpt')")
+    auditorName: str = Field(..., description="Platform display name (e.g., 'ChatGPT')")
+    overallScore: int = Field(..., ge=1, le=9, description="Average of all scores (1-9)")
+    scores: List[AuditScore] = Field(..., description="Array of 20 audit scores")
+
+
+class PlatformResult(BaseModel):
+    """Schema for platform comparison result."""
+
+    id: str = Field(..., description="Platform ID")
+    name: str = Field(..., description="Platform display name")
+    score: int = Field(..., ge=60, le=100, description="Overall comparison score (60-100)")
+    response: str = Field(..., description="Full text response from the platform")
+    detailedScores: AuditorDetailedScores = Field(..., description="Detailed audit scores")
+    topReasons: List[str] = Field(..., min_length=5, max_length=5, description="Array of 5 winning reasons")
+
+
+class ComparisonResponse(BaseModel):
+    """Schema for comparison response."""
+
+    comparisonId: str = Field(..., description="Comparison ID")
+    messageId: str = Field(..., description="Message ID")
+    prompt: str = Field(..., description="The prompt that was compared")
+    timestamp: datetime = Field(..., description="Timestamp in ISO 8601 format")
+    status: Literal["processing", "completed", "failed", "queued"] = Field(..., description="Comparison status")
+    judge: Dict[str, str] = Field(..., description="Judge platform info with id and name")
+    platforms: List[PlatformResult] = Field(..., description="List of platform results")
+    sortedBy: str = Field(default="score", description="Sorting method")
+    winner: Dict[str, Any] = Field(..., description="Winner platform info with id, name, and score")
+
+
+class ComparisonStatusResponse(BaseModel):
+    """Schema for comparison status response."""
+
+    comparisonId: str = Field(..., description="Comparison ID")
+    status: Literal["processing", "completed", "failed", "queued"] = Field(..., description="Comparison status")
+    progress: int = Field(..., ge=0, le=100, description="Progress percentage")
+    estimatedTimeRemaining: Optional[int] = Field(None, description="Estimated time remaining in seconds")
+    completedPlatforms: Optional[List[str]] = Field(None, description="List of completed platform IDs")
+    pendingPlatforms: Optional[List[str]] = Field(None, description="List of pending platform IDs")

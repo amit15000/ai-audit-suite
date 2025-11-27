@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -83,5 +85,92 @@ class LLMResponse(Base):
             "raw_metadata": self.raw_metadata,
             "error": self.error,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class User(Base):
+    """ORM model for users table."""
+
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    name = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    comparisons = relationship("Comparison", back_populates="user")
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email={self.email}, name={self.name})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert model to dictionary."""
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ComparisonStatus(str, Enum):
+    """Comparison status enum."""
+
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Comparison(Base):
+    """ORM model for comparisons table."""
+
+    __tablename__ = "comparisons"
+
+    id = Column(String, primary_key=True, index=True)
+    message_id = Column(String, unique=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    prompt = Column(Text, nullable=False)
+    judge_platform = Column(String, nullable=False)
+    selected_platforms = Column(JSON, nullable=False)  # List of platform IDs
+    status = Column(String, default=ComparisonStatus.QUEUED.value, nullable=False, index=True)
+    progress = Column(Integer, default=0, nullable=False)
+    results = Column(JSON, nullable=True)  # Full results JSON
+    error_message = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="comparisons")
+
+    def __repr__(self) -> str:
+        return f"<Comparison(id={self.id}, status={self.status}, progress={self.progress})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert model to dictionary."""
+        return {
+            "id": self.id,
+            "message_id": self.message_id,
+            "user_id": self.user_id,
+            "prompt": self.prompt,
+            "judge_platform": self.judge_platform,
+            "selected_platforms": self.selected_platforms,
+            "status": self.status,
+            "progress": self.progress,
+            "results": self.results,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
 

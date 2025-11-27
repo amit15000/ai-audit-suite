@@ -48,11 +48,36 @@ class AdapterSettings(BaseSettings):
     provider: Literal["mock", "openai"] = "mock"
     timeout_seconds: int = 30
     max_retries: int = 2
-    # API keys can be set via environment variables (OPENAI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY)
-    # or via prefixed settings (ADAPTER_OPENAI_API_KEY, ADAPTER_GOOGLE_API_KEY, ADAPTER_GEMINI_API_KEY)
+    # API keys can be set via environment variables or via prefixed settings
+    # Examples: OPENAI_API_KEY, GROQ_API_KEY, HUGGINGFACE_API_KEY
+    # Or: ADAPTER_OPENAI_API_KEY, ADAPTER_GROQ_API_KEY, etc.
     openai_api_key: str | None = None
     google_api_key: str | None = None
     gemini_api_key: str | None = None
+    groq_api_key: str | None = None
+    huggingface_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    perplexity_api_key: str | None = None
+
+
+class JWTSettings(BaseSettings):
+    """JWT authentication settings."""
+
+    model_config = SettingsConfigDict(env_prefix="JWT_")
+
+    secret_key: str = "your-secret-key-change-in-production"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+
+class CelerySettings(BaseSettings):
+    """Celery task queue settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELERY_")
+
+    broker_url: str = "redis://localhost:6379/0"
+    result_backend: str = "redis://localhost:6379/0"
 
 
 class AppSettings(BaseSettings):
@@ -66,6 +91,9 @@ class AppSettings(BaseSettings):
     storage: StorageSettings = StorageSettings()
     embedding: EmbeddingSettings = EmbeddingSettings()
     adapter: AdapterSettings = AdapterSettings()
+    jwt: JWTSettings = JWTSettings()
+    celery: CelerySettings = CelerySettings()
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
 
 @lru_cache

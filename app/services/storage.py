@@ -38,7 +38,13 @@ class RelationalStore:
 
     def __init__(self) -> None:
         # Initialize database tables on first use
-        init_db()
+        # Handle connection errors gracefully - database may not be available at startup
+        try:
+            init_db()
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning("database.init_failed", error=str(e), message="Database initialization failed, will retry on first use")
         self._audit_repo = AuditRepository()
         self._llm_response_repo = LLMResponseRepository()
 
