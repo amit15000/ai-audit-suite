@@ -17,7 +17,7 @@ from app.services.comparison_service import (
     get_comparison_results,
     get_comparison_status,
 )
-from app.tasks.comparison_tasks import process_comparison_task
+# Removed Celery task import - processing directly without Redis
 from app.utils.dependencies import get_current_user
 
 logger = structlog.get_logger(__name__)
@@ -68,30 +68,34 @@ async def submit_comparison(
 
         # Create comparison
         comparison = create_comparison(db, current_user.id, request)
+        comparison_id = comparison.id  # Save ID before closing session
 
-        # Queue async processing - try Celery, fallback to direct async if Redis unavailable
-        try:
-            # Try to use Celery for async processing
-            process_comparison_task.delay(comparison.id)
-            logger.info("comparison.queued", comparison_id=comparison.id, method="celery")
-        except Exception as celery_error:
-            # If Celery/Redis is not available, process directly in background
-            logger.warning(
-                "celery.unavailable",
-                error=str(celery_error),
-                message="Celery unavailable, processing directly in background",
-            )
-            import asyncio
-            from app.services.comparison_service import process_comparison
-            # Process in background task to avoid blocking the response
-            async def process_background():
-                try:
-                    await process_comparison(db, comparison)
-                except Exception as e:
-                    logger.error("comparison.background_error", error=str(e), exc_info=True)
-            # Create background task (don't await - let it run in background)
-            asyncio.create_task(process_background())
-            logger.info("comparison.queued", comparison_id=comparison.id, method="direct_async")
+        # Process directly in background without Redis/Celery
+        import asyncio
+        from app.core.database import get_session_factory
+        from app.domain.models import Comparison
+        from app.services.comparison_service import process_comparison
+        
+        # Process in background task to avoid blocking the response
+        async def process_background():
+            # Create a new database session for the background task
+            session_factory = get_session_factory()
+            background_db = session_factory()
+            try:
+                # Re-fetch comparison in the new session
+                background_comparison = background_db.query(Comparison).filter(
+                    Comparison.id == comparison_id
+                ).first()
+                if background_comparison:
+                    await process_comparison(background_db, background_comparison)
+            except Exception as e:
+                logger.error("comparison.background_error", error=str(e), exc_info=True)
+            finally:
+                background_db.close()
+        
+        # Create background task (don't await - let it run in background)
+        asyncio.create_task(process_background())
+        logger.info("comparison.queued", comparison_id=comparison_id, method="direct_async")
 
         return {
             "success": True,

@@ -6,7 +6,7 @@ PLATFORM_TO_ADAPTER: dict[str, str] = {
     "chatgpt": "openai",
     "openai": "openai",
     "gemini": "gemini",
-    "grok": "groq",  # Using groq as proxy for grok if not available
+    "grok": "groq",  # Note: Grok (X/Twitter) not implemented - uses Groq adapter as proxy
     "claude": "openai",  # Will need anthropic adapter
     "perplexity": "openai",  # Will need perplexity adapter
     "deepseek": "openai",  # Will need deepseek adapter

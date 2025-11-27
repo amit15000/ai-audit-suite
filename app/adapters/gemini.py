@@ -81,7 +81,7 @@ class GeminiAdapter(BaseAdapter):
             logger.debug("Calling Gemini API", url=url, model=self._model)
 
             # Request body format as per official documentation
-            request_body = {
+            request_body: Dict[str, Any] = {
                 "contents": [
                     {
                         "parts": [
@@ -90,6 +90,11 @@ class GeminiAdapter(BaseAdapter):
                     }
                 ]
             }
+            # Add system instruction if provided
+            if invocation.system_prompt:
+                request_body["systemInstruction"] = {
+                    "parts": [{"text": invocation.system_prompt}]
+                }
 
             response = await client.post(url, json=request_body)
             response.raise_for_status()

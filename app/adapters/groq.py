@@ -73,11 +73,14 @@ class GroqAdapter(BaseAdapter):
             logger.debug("Calling Groq API", url=url, model=self._model)
 
             # Groq uses OpenAI-compatible API format
+            messages = []
+            if invocation.system_prompt:
+                messages.append({"role": "system", "content": invocation.system_prompt})
+            messages.append({"role": "user", "content": invocation.instructions})
+            
             request_body = {
                 "model": self._model,
-                "messages": [
-                    {"role": "user", "content": invocation.instructions}
-                ],
+                "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": 1024,
             }

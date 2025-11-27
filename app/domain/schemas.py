@@ -12,6 +12,7 @@ class AdapterInvocation(BaseModel):
 
     adapter_id: str = Field(..., description="Logical adapter identifier.")
     instructions: str = Field(..., description="Prompt or task specification.")
+    system_prompt: str | None = Field(None, description="Optional system prompt for the adapter.")
 
 
 class AuditRequest(BaseModel):
@@ -163,10 +164,10 @@ class SubmitComparisonRequest(BaseModel):
 
     prompt: str = Field(..., description="The prompt to compare across platforms")
     platforms: List[str] = Field(
-        default_factory=lambda: ["chatgpt", "gemini", "groq", "huggingface"],
+        default_factory=lambda: ["openai", "gemini", "groq", "huggingface"],
         description="List of platform IDs to compare (defaults to all available platforms)"
     )
-    judge: str = Field(default="chatgpt", description="Platform ID to use as judge/evaluator")
+    judge: str = Field(default="openai", description="Platform ID to use as judge/evaluator")
 
 
 class AuditScore(BaseModel):
@@ -176,14 +177,14 @@ class AuditScore(BaseModel):
     value: int = Field(..., ge=1, le=9, description="Score value (1-9)")
     maxValue: int = Field(default=9, description="Maximum possible score")
     category: str = Field(..., description="Category grouping (e.g., 'Accuracy', 'Safety')")
-    isCritical: bool = Field(..., description="True if value <= 4")
+    # Note: isCritical can be computed from value <= 4, so it's redundant and removed
 
 
 class AuditorDetailedScores(BaseModel):
     """Schema for detailed audit scores from an auditor."""
 
-    auditorId: str = Field(..., description="Platform ID (e.g., 'chatgpt')")
-    auditorName: str = Field(..., description="Platform display name (e.g., 'ChatGPT')")
+    auditorId: str = Field(..., description="Platform ID (e.g., 'openai')")
+    auditorName: str = Field(..., description="Platform display name (e.g., 'OpenAI')")
     overallScore: int = Field(..., ge=1, le=9, description="Average of all scores (1-9)")
     scores: List[AuditScore] = Field(..., description="Array of 20 audit scores")
 

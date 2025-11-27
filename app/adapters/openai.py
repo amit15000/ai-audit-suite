@@ -46,13 +46,16 @@ class OpenAIAdapter(BaseAdapter):
             # Run the synchronous API call in a thread pool
             loop = asyncio.get_event_loop()
             
+            messages = []
+            if invocation.system_prompt:
+                messages.append({"role": "system", "content": invocation.system_prompt})
+            messages.append({"role": "user", "content": invocation.instructions})
+            
             response = await loop.run_in_executor(
                 None,
                 lambda: client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[
-                        {"role": "user", "content": invocation.instructions}
-                    ],
+                    messages=messages,
                     timeout=self._timeout,
                 )
             )
