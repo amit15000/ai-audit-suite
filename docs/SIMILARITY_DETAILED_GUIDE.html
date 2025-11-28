@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Understanding Similarity Analysis Statistics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            font-size: 22px;
+            border-left: 4px solid #3498db;
+            padding-left: 10px;
+        }
+        
+        h3 {
+            color: #555;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        
+        h4 {
+            color: #666;
+            margin-top: 15px;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        
+        p {
+            margin-bottom: 12px;
+            text-align: justify;
+        }
+        
+        strong {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        ul, ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+        }
+        
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #e74c3c;
+        }
+        
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        
+        th {
+            background-color: #3498db;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        
+        .highlight {
+            background-color: #fff3cd;
+            padding: 15px;
+            border-left: 4px solid #ffc107;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .example-box {
+            background-color: #e8f5e9;
+            padding: 15px;
+            border-left: 4px solid #4caf50;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .info-box {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-left: 4px solid #2196f3;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .warning-box {
+            background-color: #fff3e0;
+            padding: 15px;
+            border-left: 4px solid #ff9800;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            h2 {
+                font-size: 20px;
+            }
+            
+            table {
+                font-size: 12px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Understanding Similarity Analysis Statistics</h1>
+        
+        <p>This guide explains the statistical terms and concepts used in the similarity analysis feature.</p>
+        
+        <h2>Overview</h2>
+        <p>When you compare responses from multiple AI models, the similarity analysis generates several statistical metrics to help you understand:</p>
+        <ul>
+            <li>How similar the responses are to each other</li>
+            <li>Which responses agree with the majority (consensus)</li>
+            <li>Which responses are outliers (different from the group)</li>
+        </ul>
+        
+        <h2>Key Concepts</h2>
+        
+        <h3>1. Embeddings</h3>
+        <p><strong>What it is:</strong> An embedding is a numerical representation of text as a vector (list of numbers). Similar texts have similar embeddings.</p>
+        <p><strong>Why it matters:</strong> By converting text to numbers, we can mathematically measure how similar two pieces of text are.</p>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            • "The cat sat on the mat" → <code>[0.1, 0.3, -0.2, 0.5, ...]</code> (vector of numbers)<br>
+            • "A cat was sitting on a mat" → <code>[0.12, 0.28, -0.18, 0.48, ...]</code> (similar vector)
+        </div>
+        
+        <h3>2. Cosine Similarity</h3>
+        <p><strong>What it is:</strong> A measure of similarity between two vectors, ranging from -1 to 1.</p>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li><strong>1.0</strong> = Identical (same meaning)</li>
+            <li><strong>0.8-0.99</strong> = Very similar (high agreement)</li>
+            <li><strong>0.6-0.79</strong> = Moderately similar (some agreement)</li>
+            <li><strong>0.4-0.59</strong> = Somewhat different (low agreement)</li>
+            <li><strong>0.0-0.39</strong> = Very different (little to no agreement)</li>
+            <li><strong>-1.0</strong> = Completely opposite</li>
+        </ul>
+        <p><strong>Formula:</strong></p>
+        <pre><code>similarity = (A · B) / (||A|| × ||B||)</code></pre>
+        <p>Where:</p>
+        <ul>
+            <li><code>A · B</code> = dot product of vectors A and B</li>
+            <li><code>||A||</code> = magnitude (length) of vector A</li>
+            <li><code>||B||</code> = magnitude (length) of vector B</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            • Response A vs Response B: 0.92 → Very similar (92% similar)<br>
+            • Response A vs Response C: 0.65 → Moderately similar (65% similar)
+        </div>
+        
+        <h3>3. Similarity Matrix</h3>
+        <p><strong>What it is:</strong> A table showing pairwise similarities between all responses.</p>
+        <p><strong>Structure:</strong></p>
+        <table>
+            <tr>
+                <th></th>
+                <th>OpenAI</th>
+                <th>Gemini</th>
+                <th>Groq</th>
+            </tr>
+            <tr>
+                <td><strong>Openai</strong></td>
+                <td>1.00</td>
+                <td>0.92</td>
+                <td>0.88</td>
+            </tr>
+            <tr>
+                <td><strong>Gemini</strong></td>
+                <td>0.92</td>
+                <td>1.00</td>
+                <td>0.93</td>
+            </tr>
+            <tr>
+                <td><strong>Groq</strong></td>
+                <td>0.88</td>
+                <td>0.93</td>
+                <td>1.00</td>
+            </tr>
+        </table>
+        <p><strong>Reading the matrix:</strong></p>
+        <ul>
+            <li><strong>Diagonal (1.00):</strong> Each response compared to itself = perfect similarity</li>
+            <li><strong>Off-diagonal values:</strong> Similarity between different responses</li>
+            <li><strong>Symmetric:</strong> OpenAI vs Gemini = Gemini vs OpenAI (same value)</li>
+        </ul>
+        <p><strong>What it tells you:</strong></p>
+        <ul>
+            <li>High values (0.8+) = Responses agree with each other</li>
+            <li>Low values (&lt;0.6) = Responses disagree significantly</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example Interpretation:</strong><br>
+            • OpenAI vs Gemini: 0.92 → These two responses are very similar<br>
+            • OpenAI vs Groq: 0.88 → These are also similar, but slightly less<br>
+            • Gemini vs Groq: 0.93 → These two are the most similar pair
+        </div>
+        
+        <h3>4. Consensus Score</h3>
+        <p><strong>What it is:</strong> The average similarity of one response to all other responses.</p>
+        <p><strong>Calculation:</strong></p>
+        <pre><code>Consensus Score = (Sum of similarities to all others) / (Number of other responses)</code></pre>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li><strong>High consensus (0.8-1.0):</strong> Response agrees with the group</li>
+            <li><strong>Medium consensus (0.6-0.79):</strong> Response partially agrees</li>
+            <li><strong>Low consensus (&lt;0.6):</strong> Response disagrees with the group (potential outlier)</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            OpenAI Consensus = (0.92 + 0.88) / 2 = 0.90<br>
+            Gemini Consensus = (0.92 + 0.93) / 2 = 0.925<br>
+            Groq Consensus = (0.88 + 0.93) / 2 = 0.905
+        </div>
+        <p><strong>What it means:</strong></p>
+        <ul>
+            <li><strong>Gemini (0.925):</strong> Highest consensus - most similar to the group</li>
+            <li><strong>OpenAI (0.90):</strong> High consensus - agrees with others</li>
+            <li><strong>Groq (0.905):</strong> High consensus - also agrees well</li>
+        </ul>
+        
+        <h3>5. Outliers</h3>
+        <p><strong>What it is:</strong> Responses with significantly lower consensus scores than the group average.</p>
+        <p><strong>Detection Method:</strong> Statistical threshold using mean and standard deviation</p>
+        <pre><code>Threshold = Mean - (1.5 × Standard Deviation)
+Outlier = Consensus Score < Threshold</code></pre>
+        <p><strong>Why 1.5?</strong> This is similar to the Interquartile Range (IQR) method, which identifies values that are unusually far from the center.</p>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li><strong>Outlier detected:</strong> Response is significantly different from the group</li>
+            <li><strong>No outliers:</strong> All responses are reasonably similar</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            Mean Consensus: 0.90<br>
+            Std Dev: 0.02<br>
+            Threshold: 0.90 - (1.5 × 0.02) = 0.87<br><br>
+            If a response has consensus &lt; 0.87, it's an outlier.
+        </div>
+        <p><strong>What it means:</strong></p>
+        <p>Outliers may indicate:</p>
+        <ul>
+            <li>Different interpretation of the question</li>
+            <li>Unique perspective or approach</li>
+            <li>Potential error or misunderstanding</li>
+            <li>Creative or alternative answer</li>
+        </ul>
+        
+        <h3>6. Statistical Measures</h3>
+        
+        <h4>Mean (Average)</h4>
+        <p><strong>What it is:</strong> The average of all consensus scores.</p>
+        <p><strong>Formula:</strong></p>
+        <pre><code>Mean = (Sum of all consensus scores) / (Number of responses)</code></pre>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li><strong>High mean (0.8+):</strong> Overall high agreement among responses</li>
+            <li><strong>Low mean (&lt;0.6):</strong> Overall low agreement (responses are diverse)</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            Consensus Scores: [0.90, 0.925, 0.905]<br>
+            Mean = (0.90 + 0.925 + 0.905) / 3 = 0.91<br><br>
+            This means, on average, responses are 91% similar to each other.
+        </div>
+        
+        <h4>Standard Deviation (Std Dev)</h4>
+        <p><strong>What it is:</strong> A measure of how spread out the consensus scores are.</p>
+        <p><strong>Formula:</strong></p>
+        <pre><code>Std Dev = √(Σ(xi - mean)² / n)</code></pre>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li><strong>Low std dev (&lt;0.05):</strong> Consensus scores are close together (consistent agreement)</li>
+            <li><strong>High std dev (&gt;0.1):</strong> Consensus scores vary widely (inconsistent agreement)</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            Consensus Scores: [0.90, 0.925, 0.905]<br>
+            Mean: 0.91<br>
+            Std Dev: 0.012<br><br>
+            Low std dev → All responses agree similarly with the group
+        </div>
+        <p><strong>What it means:</strong></p>
+        <ul>
+            <li>Low std dev = Responses are consistently similar</li>
+            <li>High std dev = Some responses agree more than others</li>
+        </ul>
+        
+        <h4>Minimum (Min)</h4>
+        <p><strong>What it is:</strong> The lowest consensus score in the group.</p>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li>Shows the response that agrees least with the group</li>
+            <li>If min is low, at least one response is quite different</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            Min: 0.88<br>
+            → The least similar response is still 88% similar (high agreement)
+        </div>
+        
+        <h4>Maximum (Max)</h4>
+        <p><strong>What it is:</strong> The highest consensus score in the group.</p>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li>Shows the response that agrees most with the group</li>
+            <li>The "most representative" response</li>
+        </ul>
+        <div class="example-box">
+            <strong>Example:</strong><br>
+            Max: 0.925<br>
+            → The most similar response is 92.5% similar to others
+        </div>
+        
+        <h4>Count</h4>
+        <p><strong>What it is:</strong> The number of responses analyzed.</p>
+        <p><strong>Interpretation:</strong></p>
+        <ul>
+            <li>More responses = More reliable statistics</li>
+            <li>Need at least 2 responses for similarity analysis</li>
+            <li>Recommended: 3+ responses for meaningful analysis</li>
+        </ul>
+        
+        <h2>Complete Example</h2>
+        
+        <h3>Input: 3 Responses</h3>
+        <div class="example-box">
+            <strong>OpenAI:</strong> "Artificial intelligence is the simulation of human intelligence by machines."<br>
+            <strong>Gemini:</strong> "AI refers to computer systems that can perform tasks requiring human intelligence."<br>
+            <strong>Groq:</strong> "Artificial intelligence enables machines to mimic human cognitive functions."
+        </div>
+        
+        <h3>Similarity Matrix</h3>
+        <table>
+            <tr>
+                <th></th>
+                <th>OpenAI</th>
+                <th>Gemini</th>
+                <th>Groq</th>
+            </tr>
+            <tr>
+                <td><strong>Openai</strong></td>
+                <td>1.00</td>
+                <td>0.92</td>
+                <td>0.88</td>
+            </tr>
+            <tr>
+                <td><strong>Gemini</strong></td>
+                <td>0.92</td>
+                <td>1.00</td>
+                <td>0.93</td>
+            </tr>
+            <tr>
+                <td><strong>Groq</strong></td>
+                <td>0.88</td>
+                <td>0.93</td>
+                <td>1.00</td>
+            </tr>
+        </table>
+        
+        <h3>Consensus Scores</h3>
+        <div class="example-box">
+            OpenAI: 0.90 (Average of 0.92 and 0.88)<br>
+            Gemini: 0.925 (Average of 0.92 and 0.93)<br>
+            Groq: 0.905 (Average of 0.88 and 0.93)
+        </div>
+        
+        <h3>Statistics</h3>
+        <div class="info-box">
+            <strong>Mean:</strong> 0.91 (Average consensus)<br>
+            <strong>Std Dev:</strong> 0.012 (Low variation - consistent agreement)<br>
+            <strong>Min:</strong> 0.90 (Lowest consensus)<br>
+            <strong>Max:</strong> 0.925 (Highest consensus)<br>
+            <strong>Count:</strong> 3 (Number of responses)
+        </div>
+        
+        <h3>Outlier Analysis</h3>
+        <div class="example-box">
+            Threshold: 0.91 - (1.5 × 0.012) = 0.892<br>
+            Outliers: [] (No outliers - all scores > 0.892)
+        </div>
+        
+        <h3>Interpretation</h3>
+        <div class="highlight">
+            • <strong>All responses are very similar</strong> (consensus scores 0.90-0.925)<br>
+            • <strong>High agreement</strong> (mean 0.91, low std dev 0.012)<br>
+            • <strong>No outliers</strong> (all responses agree with the group)<br>
+            • <strong>Gemini has highest consensus</strong> (most representative of the group)
+        </div>
+        
+        <h2>Practical Use Cases</h2>
+        
+        <h3>1. Quality Assurance</h3>
+        <ul>
+            <li><strong>High consensus (0.8+):</strong> Responses are consistent → Good quality</li>
+            <li><strong>Low consensus (&lt;0.6):</strong> Responses vary → May need review</li>
+        </ul>
+        
+        <h3>2. Finding Best Response</h3>
+        <ul>
+            <li><strong>Highest consensus score:</strong> Most representative of the group</li>
+            <li><strong>Not an outlier:</strong> Agrees with others</li>
+        </ul>
+        
+        <h3>3. Detecting Issues</h3>
+        <ul>
+            <li><strong>Outliers detected:</strong> One response is very different
+                <ul>
+                    <li>Could indicate: error, misunderstanding, or unique perspective</li>
+                    <li>Action: Review the outlier response</li>
+                </ul>
+            </li>
+        </ul>
+        
+        <h3>4. Model Comparison</h3>
+        <ul>
+            <li><strong>Compare consensus scores:</strong> Which model's responses agree most with others?</li>
+            <li><strong>High consensus:</strong> Model produces typical/expected responses</li>
+            <li><strong>Low consensus:</strong> Model produces unique/different responses</li>
+        </ul>
+        
+        <h2>Common Questions</h2>
+        
+        <h3>Q: What's a "good" consensus score?</h3>
+        <div class="info-box">
+            <strong>A:</strong><br>
+            • <strong>0.8-1.0:</strong> Excellent agreement<br>
+            • <strong>0.6-0.79:</strong> Good agreement<br>
+            • <strong>&lt;0.6:</strong> Low agreement (may be an outlier)
+        </div>
+        
+        <h3>Q: Why are some similarity scores different in the matrix?</h3>
+        <div class="info-box">
+            <strong>A:</strong> Each pair comparison is independent. Small differences are normal due to:<br>
+            • Different wording<br>
+            • Different emphasis<br>
+            • Numerical precision
+        </div>
+        
+        <h3>Q: What if all responses are outliers?</h3>
+        <div class="warning-box">
+            <strong>A:</strong> This means responses are very different from each other. Consider:<br>
+            • Are the prompts clear?<br>
+            • Are the models appropriate for the task?<br>
+            • Is the question ambiguous?
+        </div>
+        
+        <h3>Q: Can I trust a response with low consensus?</h3>
+        <div class="info-box">
+            <strong>A:</strong> It depends:<br>
+            • <strong>Low consensus + outlier:</strong> Review carefully - may be wrong or unique<br>
+            • <strong>Low consensus + not outlier:</strong> Still within normal range, just less typical
+        </div>
+        
+        <h3>Q: How many responses do I need?</h3>
+        <div class="info-box">
+            <strong>A:</strong><br>
+            • <strong>Minimum:</strong> 2 (for basic similarity)<br>
+            • <strong>Recommended:</strong> 3-5 (for reliable statistics)<br>
+            • <strong>More responses:</strong> Better statistics, but diminishing returns
+        </div>
+        
+        <h2>Technical Notes</h2>
+        
+        <h3>Embedding Model</h3>
+        <ul>
+            <li>Uses OpenAI's <code>text-embedding-3-large</code> model</li>
+            <li>Generates 3072-dimensional vectors</li>
+            <li>Optimized for semantic similarity</li>
+        </ul>
+        
+        <h3>Calculation Method</h3>
+        <ul>
+            <li><strong>Similarity:</strong> Cosine similarity (normalized dot product)</li>
+            <li><strong>Consensus:</strong> Arithmetic mean of similarities</li>
+            <li><strong>Outliers:</strong> Statistical method (mean - 1.5 × std dev)</li>
+        </ul>
+        
+        <h3>Performance</h3>
+        <ul>
+            <li>Batch processing for efficiency</li>
+            <li>Async operations for speed</li>
+            <li>Results cached in database</li>
+        </ul>
+        
+        <h2>Summary</h2>
+        <table>
+            <tr>
+                <th>Term</th>
+                <th>What It Measures</th>
+                <th>Good Value</th>
+            </tr>
+            <tr>
+                <td><strong>Similarity</strong></td>
+                <td>How similar two responses are</td>
+                <td>0.8+</td>
+            </tr>
+            <tr>
+                <td><strong>Consensus Score</strong></td>
+                <td>How well a response agrees with the group</td>
+                <td>0.8+</td>
+            </tr>
+            <tr>
+                <td><strong>Mean</strong></td>
+                <td>Average agreement across all responses</td>
+                <td>0.8+</td>
+            </tr>
+            <tr>
+                <td><strong>Std Dev</strong></td>
+                <td>Consistency of agreement</td>
+                <td>&lt;0.05</td>
+            </tr>
+            <tr>
+                <td><strong>Outliers</strong></td>
+                <td>Responses that disagree significantly</td>
+                <td>None</td>
+            </tr>
+        </table>
+        
+        <div class="highlight" style="margin-top: 30px;">
+            <strong>Key Takeaway:</strong> High consensus scores (0.8+) and low standard deviation (&lt;0.05) indicate that all AI models are producing similar, consistent responses - which is generally a good sign of quality and reliability.
+        </div>
+    </div>
+</body>
+</html>
+
