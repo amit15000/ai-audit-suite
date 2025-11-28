@@ -12,7 +12,7 @@ from app.domain.schemas import (
     ComparisonStatusResponse,
     SubmitComparisonRequest,
 )
-from app.services.comparison_service import (
+from app.services.comparison.comparison_service import (
     create_comparison,
     get_comparison_results,
     get_comparison_status,
@@ -74,7 +74,7 @@ async def submit_comparison(
         import asyncio
         from app.core.database import get_session_factory
         from app.domain.models import Comparison
-        from app.services.comparison_service import process_comparison
+        from app.services.comparison.comparison_service import process_comparison
         
         # Process in background task to avoid blocking the response
         async def process_background():

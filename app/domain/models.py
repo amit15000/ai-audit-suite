@@ -174,3 +174,81 @@ class Comparison(Base):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
 
+
+class Embedding(Base):
+    """ORM model for storing embeddings of LLM responses."""
+
+    __tablename__ = "embeddings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(String, nullable=False, index=True, comment="Request ID to group embeddings")
+    provider = Column(String, nullable=False, index=True, comment="LLM provider/adapter ID")
+    text = Column(Text, nullable=False, comment="The text that was embedded")
+    embedding_vector = Column(JSON, nullable=False, comment="Embedding vector as JSON array")
+    model_name = Column(String, nullable=False, comment="Embedding model used")
+    embedding_dimension = Column(Integer, nullable=False, comment="Dimension of the embedding vector")
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Embedding(id={self.id}, request_id={self.request_id}, "
+            f"provider={self.provider}, dimension={self.embedding_dimension})>"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert model to dictionary."""
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "provider": self.provider,
+            "text": self.text,
+            "embedding_vector": self.embedding_vector,
+            "model_name": self.model_name,
+            "embedding_dimension": self.embedding_dimension,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SimilarityAnalysis(Base):
+    """ORM model for storing similarity analysis results."""
+
+    __tablename__ = "similarity_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(String, nullable=False, index=True, comment="Request ID to group analyses")
+    similarity_matrix = Column(JSON, nullable=False, comment="Full similarity matrix as nested dict")
+    consensus_scores = Column(JSON, nullable=False, comment="Consensus scores for each provider")
+    outliers = Column(JSON, nullable=True, comment="List of outlier provider IDs")
+    outlier_threshold = Column(String, nullable=True, comment="Threshold used for outlier detection")
+    statistics = Column(JSON, nullable=True, comment="Statistical summary of consensus scores")
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SimilarityAnalysis(id={self.id}, request_id={self.request_id}, "
+            f"outliers_count={len(self.outliers) if self.outliers else 0})>"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert model to dictionary."""
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "similarity_matrix": self.similarity_matrix,
+            "consensus_scores": self.consensus_scores,
+            "outliers": self.outliers,
+            "outlier_threshold": self.outlier_threshold,
+            "statistics": self.statistics,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+

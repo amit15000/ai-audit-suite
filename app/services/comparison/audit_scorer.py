@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.domain.schemas import AuditScore, AuditorDetailedScores
-from app.services.ai_platform_service import AIPlatformService
+from app.services.llm.ai_platform_service import AIPlatformService
 from app.utils.platform_mapping import get_platform_name
 
 # Judge system prompt - same as used in OpenAI judge

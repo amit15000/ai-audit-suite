@@ -17,7 +17,7 @@ from app.domain.auth_schemas import (
     TokenResponse,
 )
 from app.domain.models import User
-from app.services.auth_service import (
+from app.services.core.auth_service import (
     authenticate_user,
     create_tokens_for_user,
     create_user,

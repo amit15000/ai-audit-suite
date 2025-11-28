@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, status
 
 from app.domain.schemas import AdapterResponse, MultiLLMRequest, MultiLLMResponse, MultiLLMResponseItem
-from app.services.multi_llm_collector import MultiLLMCollector
+from app.services.llm.multi_llm_collector import MultiLLMCollector
 
 logger = structlog.get_logger(__name__)
 

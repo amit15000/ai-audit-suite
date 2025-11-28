@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.repositories import AuditRepository, LLMResponseRepository
-from app.services.multi_llm_collector import MultiLLMCollector
+from app.services.llm.multi_llm_collector import MultiLLMCollector
 
 
 def get_audit_repository() -> AuditRepository:

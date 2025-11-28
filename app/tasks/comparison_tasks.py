@@ -6,7 +6,7 @@ from celery import Celery
 from app.core.config import get_settings
 from app.core.database import get_session_factory
 from app.domain.models import Comparison
-from app.services.comparison_service import process_comparison
+from app.services.comparison.comparison_service import process_comparison
 
 settings = get_settings()
 

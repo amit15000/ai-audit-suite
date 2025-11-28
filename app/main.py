@@ -4,15 +4,17 @@ import logging
 from typing import Any, Dict
 
 import structlog
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.v1.routers import auth, comparison, multi_llm, responses, ui
+from app.api.v1.routers import auth, comparison, multi_llm, responses, similarity, ui
 from app.core import configure_logging, get_settings
 from app.core.config import AppSettings
 from app.domain.schemas import AuditRequest, AuditResponse
-from app.services.audit_service import AuditService
+from app.services.comparison.audit_service import AuditService
 from app.adapters import mock as _mock_adapter  # noqa: F401
 from app.adapters import openai as _openai_adapter  # noqa: F401
 from app.adapters import gemini as _gemini_adapter  # noqa: F401
@@ -23,6 +25,38 @@ from app.adapters import huggingface as _huggingface_adapter  # noqa: F401
 def create_app(settings: AppSettings) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="Project W Audit API", version="0.1.0")
+    
+    # Global exception handler for unhandled exceptions
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Handle all unhandled exceptions and return proper JSON response."""
+        import structlog
+        logger = structlog.get_logger(__name__)
+        logger.error("unhandled_exception", error=str(exc), exc_info=True)
+        
+        error_message = str(exc)
+        error_code = "INTERNAL_ERROR"
+        
+        # Provide helpful messages for common errors
+        if "API key" in error_message or "not configured" in error_message:
+            error_code = "API_KEY_MISSING"
+            error_message = (
+                "OpenAI API key is required for embedding generation. "
+                "Please set OPENAI_API_KEY or ADAPTER_OPENAI_API_KEY in your .env file "
+                "and restart the server."
+            )
+        
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "error": {
+                    "code": error_code,
+                    "message": error_message,
+                },
+            },
+        )
+    
     # CORS configuration
     cors_origins = settings.cors_origins if hasattr(settings, "cors_origins") else ["*"]
     app.add_middleware(
@@ -39,6 +73,7 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.include_router(comparison.router)
     app.include_router(multi_llm.router)
     app.include_router(responses.router)
+    app.include_router(similarity.router)
     app.include_router(ui.router)
 
     @app.post("/audit", response_model=AuditResponse)

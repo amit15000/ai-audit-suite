@@ -13,11 +13,11 @@ from app.domain.schemas import (
     AuditRequest,
     AuditResponse,
 )
-from app.services.consensus import ConsensusEngine
-from app.services.judge import JudgeEngine
-from app.services.metrics import AUDIT_LATENCY_SECONDS, AUDIT_REQUESTS_TOTAL, JUDGE_FAILURES_TOTAL
-from app.services.safety_checker import SafetyChecker
-from app.services.storage import ObjectStoreClient, RelationalStore
+from app.services.judgment.consensus import ConsensusEngine
+from app.services.judgment.judge import JudgeEngine
+from app.services.core.metrics import AUDIT_LATENCY_SECONDS, AUDIT_REQUESTS_TOTAL, JUDGE_FAILURES_TOTAL
+from app.services.core.safety_checker import SafetyChecker
+from app.services.core.storage import ObjectStoreClient, RelationalStore
 
 logger = structlog.get_logger(__name__)
 

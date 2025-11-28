@@ -5,7 +5,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import os
+
 from dotenv import load_dotenv
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load .env file explicitly to ensure environment variables are available
@@ -59,6 +62,26 @@ class AdapterSettings(BaseSettings):
     anthropic_api_key: str | None = None
     perplexity_api_key: str | None = None
 
+    @model_validator(mode="after")
+    def load_api_keys_from_env(self) -> "AdapterSettings":
+        """Load API keys from environment variables (check both prefixed and non-prefixed)."""
+        # Check OPENAI_API_KEY (direct) or ADAPTER_OPENAI_API_KEY (prefixed)
+        if not self.openai_api_key:
+            self.openai_api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ADAPTER_OPENAI_API_KEY")
+        if not self.google_api_key:
+            self.google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("ADAPTER_GOOGLE_API_KEY") or os.getenv("ADAPTER_GEMINI_API_KEY")
+        if not self.gemini_api_key:
+            self.gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("ADAPTER_GEMINI_API_KEY") or os.getenv("ADAPTER_GOOGLE_API_KEY")
+        if not self.groq_api_key:
+            self.groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("ADAPTER_GROQ_API_KEY")
+        if not self.huggingface_api_key:
+            self.huggingface_api_key = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("ADAPTER_HUGGINGFACE_API_KEY")
+        if not self.anthropic_api_key:
+            self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ADAPTER_ANTHROPIC_API_KEY")
+        if not self.perplexity_api_key:
+            self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY") or os.getenv("ADAPTER_PERPLEXITY_API_KEY")
+        return self
+
 
 class JWTSettings(BaseSettings):
     """JWT authentication settings."""
@@ -96,8 +119,19 @@ class AppSettings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
 
-@lru_cache
+_settings_cache: AppSettings | None = None
+
+
 def get_settings() -> AppSettings:
-    """Get cached application settings."""
-    return AppSettings()
+    """Get application settings (cached but can be cleared)."""
+    global _settings_cache
+    if _settings_cache is None:
+        _settings_cache = AppSettings()
+    return _settings_cache
+
+
+def clear_settings_cache() -> None:
+    """Clear the settings cache (useful for testing or reloading config)."""
+    global _settings_cache
+    _settings_cache = None
 

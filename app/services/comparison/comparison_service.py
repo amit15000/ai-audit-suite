@@ -13,8 +13,9 @@ from app.domain.schemas import (
     PlatformResult,
     SubmitComparisonRequest,
 )
-from app.services.ai_platform_service import AIPlatformService
-from app.services.audit_scorer import AuditScorer
+from app.services.llm.ai_platform_service import AIPlatformService
+from app.services.comparison.audit_scorer import AuditScorer
+from app.services.embedding.similarity_processor import SimilarityProcessor
 from app.utils.platform_mapping import get_platform_name
 
 
@@ -66,8 +67,39 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                 # Store error but continue with other platforms
                 responses[platform_id] = f"Error: {str(e)}"
             
-            comparison.progress = int((idx + 1) / total_platforms * 50)  # 50% for responses  # type: ignore[assignment]
+            comparison.progress = int((idx + 1) / total_platforms * 40)  # 40% for responses  # type: ignore[assignment]
             db.commit()
+
+        # Process similarity analysis (embedding & similarity)
+        similarity_analysis = None
+        valid_responses = {
+            pid: resp
+            for pid, resp in responses.items()
+            if pid in responses and not resp.startswith("Error:")
+        }
+        
+        if len(valid_responses) >= 2:  # Need at least 2 responses for similarity
+            try:
+                similarity_processor = SimilarityProcessor()
+                comparison_id_str = str(comparison.id)  # type: ignore[arg-type]
+                similarity_analysis = await similarity_processor.process_responses(
+                    request_id=comparison_id_str,
+                    responses=valid_responses,
+                    persist=True,
+                )
+                comparison.progress = 50  # type: ignore[assignment]
+                db.commit()
+            except Exception as e:
+                # Log error but don't fail the comparison
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.warning(
+                    "comparison.similarity_analysis_failed",
+                    comparison_id=str(comparison.id),  # type: ignore[arg-type]
+                    error=str(e),
+                )
+                comparison.progress = 50  # type: ignore[assignment]
+                db.commit()
 
         # Calculate scores for each platform
         platform_results: list[PlatformResult] = []
@@ -136,6 +168,14 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                 "score": platform_results[0].score,
             },
         }
+
+        # Add similarity analysis to results if available
+        if similarity_analysis:
+            results["similarityAnalysis"] = {
+                "consensusScores": similarity_analysis["consensus_scores"],
+                "outliers": similarity_analysis["outliers"],
+                "statistics": similarity_analysis["outlier_analysis"]["statistics"],
+            }
 
         comparison.results = results  # type: ignore[assignment]
         comparison.status = ComparisonStatus.COMPLETED.value  # type: ignore[assignment]

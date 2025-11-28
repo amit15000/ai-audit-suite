@@ -14,7 +14,7 @@ import structlog
 
 from app.adapters.base import AdapterRegistry
 from app.domain.schemas import AdapterInvocation, AdapterResponse
-from app.services.storage import RelationalStore
+from app.services.core.storage import RelationalStore
 
 logger = structlog.get_logger(__name__)
 

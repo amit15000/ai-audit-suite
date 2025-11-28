@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from app.services.safety_checker import SafetyChecker
+from app.services.core.safety_checker import SafetyChecker
 
 
 class DatasetGenerator:

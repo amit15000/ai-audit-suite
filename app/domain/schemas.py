@@ -224,3 +224,67 @@ class ComparisonStatusResponse(BaseModel):
     estimatedTimeRemaining: Optional[int] = Field(None, description="Estimated time remaining in seconds")
     completedPlatforms: Optional[List[str]] = Field(None, description="List of completed platform IDs")
     pendingPlatforms: Optional[List[str]] = Field(None, description="List of pending platform IDs")
+
+
+# Similarity Analysis Schemas
+
+
+class SimilarityMatrixEntry(BaseModel):
+    """Schema for a single entry in similarity matrix."""
+
+    provider_id: str = Field(..., description="Provider ID")
+    similarities: Dict[str, float] = Field(..., description="Similarity scores to all other providers")
+
+
+class ConsensusScoreEntry(BaseModel):
+    """Schema for a single consensus score entry."""
+
+    provider_id: str = Field(..., description="Provider ID")
+    score: float = Field(..., ge=0.0, le=1.0, description="Consensus score (0-1)")
+    is_outlier: bool = Field(default=False, description="Whether this provider is an outlier")
+
+
+class OutlierDetail(BaseModel):
+    """Schema for detailed outlier information."""
+
+    id: str = Field(..., description="Provider ID")
+    consensus_score: float = Field(..., description="Consensus score")
+    deviation_from_mean: float = Field(..., description="Deviation from mean consensus score")
+    deviation_in_std: float = Field(..., description="Deviation in standard deviations")
+    avg_similarity_to_others: Optional[float] = Field(None, description="Average similarity to other providers")
+
+
+class SimilarityStatistics(BaseModel):
+    """Schema for similarity statistics."""
+
+    mean: float = Field(..., description="Mean consensus score")
+    std_dev: float = Field(..., description="Standard deviation of consensus scores")
+    min: float = Field(..., description="Minimum consensus score")
+    max: float = Field(..., description="Maximum consensus score")
+    count: int = Field(..., description="Number of responses analyzed")
+
+
+class SimilarityAnalysisResponse(BaseModel):
+    """Schema for similarity analysis response."""
+
+    request_id: str = Field(..., description="Request ID used to group responses")
+    similarity_matrix: Dict[str, Dict[str, float]] = Field(
+        ..., description="Full similarity matrix (provider_id -> {provider_id -> similarity})"
+    )
+    consensus_scores: Dict[str, float] = Field(
+        ..., description="Consensus scores for each provider"
+    )
+    outliers: List[str] = Field(default_factory=list, description="List of outlier provider IDs")
+    outlier_threshold: Optional[float] = Field(None, description="Threshold used for outlier detection")
+    statistics: SimilarityStatistics = Field(..., description="Statistical summary")
+    outlier_details: List[OutlierDetail] = Field(
+        default_factory=list, description="Detailed information about outliers"
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of the analysis")
+
+
+class ProcessSimilarityRequest(BaseModel):
+    """Request model for processing similarity analysis."""
+
+    request_id: str = Field(..., description="Request ID to process (must have existing LLM responses)")
+    persist: bool = Field(default=True, description="Whether to persist results to database")

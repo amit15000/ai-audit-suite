@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.repositories import LLMResponseRepository
-from app.services.storage import RelationalStore
+from app.services.core.storage import RelationalStore
 
 router = APIRouter(prefix="/api/v1/responses", tags=["responses"])
 
