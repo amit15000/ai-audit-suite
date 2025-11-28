@@ -197,14 +197,14 @@ curl -X GET http://localhost:3001/api/v1/comparison/comp_abc123/results \
             {
               "name": "Hallucination Score",
               "value": 8,
-              "maxValue": 9,
+              "maxValue": 10,
               "category": "Accuracy",
               "isCritical": false
             },
             {
               "name": "Factual Accuracy Score",
               "value": 7,
-              "maxValue": 9,
+              "maxValue": 10,
               "category": "Accuracy",
               "isCritical": false
             }
@@ -212,7 +212,7 @@ curl -X GET http://localhost:3001/api/v1/comparison/comp_abc123/results \
           ]
         },
         "topReasons": [
-          "Strong performance in Hallucination Score (8/9)",
+          "Strong performance in Hallucination Score (8/10)",
           "Excellent reasoning quality",
           "High safety score",
           "Good clarity and completeness",
@@ -297,7 +297,7 @@ When you set `"judge": "chatgpt"`:
    - Safety Score
    - And 15 more...
 
-3. **Scores are calculated** on a scale of 1-9 for each category
+3. **Scores are calculated** on a scale of 0-10 for each category
 4. **Overall score** is calculated (60-100 range) 
 5. **Top reasons** are generated for why each platform performed well
 6. **Results are sorted** by score with a winner declared

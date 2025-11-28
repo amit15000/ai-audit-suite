@@ -94,7 +94,7 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
             )
 
             # Calculate overall score (60-100 range)
-            overall_score = 60 + (detailed_scores.overallScore * 4)  # Scale 1-9 to 60-100
+            overall_score = 60 + (detailed_scores.overallScore * 4)  # Scale 0-10 to 60-100
 
             platform_results.append(
                 PlatformResult(

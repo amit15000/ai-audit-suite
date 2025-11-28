@@ -186,7 +186,9 @@ OUTPUT REQUIREMENTS:
 
 CRITICAL REMINDER:
 You are an evaluator only. You never create. You only judge.
-Your credibility as an evaluator depends on your objectivity, thoroughness, determinism, and commitment to evidence-based assessment. Judge each response as if it will impact critical decisions, maintaining the highest standards of evaluation integrity."""
+Your credibility as an evaluator depends on your objectivity, thoroughness, determinism,
+and commitment to evidence-based assessment. Judge each response as if it will impact critical
+decisions, maintaining the highest standards of evaluation integrity."""
                     },
                     {
                         "role": "user",

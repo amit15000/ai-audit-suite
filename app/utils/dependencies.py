@@ -31,6 +31,10 @@ async def get_current_user(
     token = credentials.credentials
     payload = decode_token(token)
     if payload is None:
+        # Provide more helpful error message
+        import structlog
+        logger = structlog.get_logger(__name__)
+        logger.warning("auth.token_invalid", message="Token validation failed - may be expired or invalid")
         raise credentials_exception
     
     user_id: str | None = payload.get("sub")

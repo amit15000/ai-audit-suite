@@ -174,9 +174,10 @@ class AuditScore(BaseModel):
     """Schema for individual audit score."""
 
     name: str = Field(..., description="Score name (e.g., 'Hallucination Score')")
-    value: int = Field(..., ge=1, le=9, description="Score value (1-9)")
-    maxValue: int = Field(default=9, description="Maximum possible score")
+    value: int = Field(..., ge=0, le=10, description="Score value (0-10)")
+    maxValue: int = Field(default=10, description="Maximum possible score")
     category: str = Field(..., description="Category grouping (e.g., 'Accuracy', 'Safety')")
+    explanation: str = Field(default="", description="Detailed explanation of why this score was assigned")
     # Note: isCritical can be computed from value <= 4, so it's redundant and removed
 
 
@@ -185,7 +186,7 @@ class AuditorDetailedScores(BaseModel):
 
     auditorId: str = Field(..., description="Platform ID (e.g., 'openai')")
     auditorName: str = Field(..., description="Platform display name (e.g., 'OpenAI')")
-    overallScore: int = Field(..., ge=1, le=9, description="Average of all scores (1-9)")
+    overallScore: int = Field(..., ge=0, le=10, description="Average of all scores (0-10)")
     scores: List[AuditScore] = Field(..., description="Array of 20 audit scores")
 
 
