@@ -190,6 +190,15 @@ class AuditorDetailedScores(BaseModel):
     scores: List[AuditScore] = Field(..., description="Array of 20 audit scores")
 
 
+class JudgeEvaluation(BaseModel):
+    """Schema for Judge LLM evaluation results."""
+
+    scores: JudgmentScores = Field(..., description="Individual criterion scores (0-10)")
+    trustScore: float = Field(..., ge=0.0, le=10.0, description="Weighted trust score (0-10)")
+    fallbackApplied: bool = Field(default=False, description="Whether fallback scoring was used")
+    weights: Dict[str, float] = Field(default_factory=dict, description="Weights used for trust score calculation")
+
+
 class PlatformResult(BaseModel):
     """Schema for platform comparison result."""
 
@@ -199,6 +208,7 @@ class PlatformResult(BaseModel):
     response: str = Field(..., description="Full text response from the platform")
     detailedScores: AuditorDetailedScores = Field(..., description="Detailed audit scores")
     topReasons: List[str] = Field(..., min_length=5, max_length=5, description="Array of 5 winning reasons")
+    judgeEvaluation: Optional[JudgeEvaluation] = Field(None, description="Judge LLM evaluation metrics")
 
 
 class ComparisonResponse(BaseModel):

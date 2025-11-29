@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 from app.domain.models import Comparison, ComparisonStatus, User
 from app.domain.schemas import (
     ComparisonResponse,
+    JudgeEvaluation,
     PlatformResult,
     SubmitComparisonRequest,
 )
 from app.services.llm.ai_platform_service import AIPlatformService
 from app.services.comparison.audit_scorer import AuditScorer
 from app.services.embedding.similarity_processor import SimilarityProcessor
+from app.services.judgment.judge_llm_service import JudgeLLMService
 from app.utils.platform_mapping import get_platform_name
 
 
@@ -51,6 +53,7 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
 
         ai_service = AIPlatformService()
         scorer = AuditScorer()
+        judge_service = JudgeLLMService()
 
         # Get responses from all platforms
         # selected_platforms is JSON column storing a list - cast for type checker
@@ -110,6 +113,9 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
 
             platform_name = get_platform_name(platform_id)
             judge_platform_id = str(comparison.judge_platform)  # type: ignore[arg-type]
+            prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
+            
+            # Calculate detailed audit scores
             detailed_scores = await scorer.calculate_scores(
                 platform_id,
                 platform_name,
@@ -125,8 +131,38 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                 judge_platform_id,
             )
 
+            # Evaluate with Judge LLM (fixed JSON rubric evaluation)
+            judge_evaluation = None
+            try:
+                judge_result = await judge_service.evaluate(
+                    response_text=responses[platform_id],
+                    judge_platform_id=judge_platform_id,
+                    user_query=prompt_text,
+                )
+                judge_evaluation = JudgeEvaluation(
+                    scores=judge_result.scores,
+                    trustScore=judge_result.trust_score,
+                    fallbackApplied=judge_result.fallback_applied,
+                    weights=judge_result.weights_used,
+                )
+            except Exception as e:
+                # Log error but don't fail the comparison
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.warning(
+                    "comparison.judge_evaluation_failed",
+                    platform_id=platform_id,
+                    error=str(e),
+                )
+
             # Calculate overall score (60-100 range)
-            overall_score = 60 + (detailed_scores.overallScore * 4)  # Scale 0-10 to 60-100
+            # Prefer judge trust score if available and valid, otherwise use detailed scores average
+            if judge_evaluation and not judge_evaluation.fallbackApplied and judge_evaluation.trustScore > 0:
+                # Scale trust score (0-10) to 60-100 range
+                overall_score = 60 + int(judge_evaluation.trustScore * 4)
+            else:
+                # Use detailed scores average (20 categories)
+                overall_score = 60 + (detailed_scores.overallScore * 4)  # Scale 0-10 to 60-100
 
             platform_results.append(
                 PlatformResult(
@@ -136,6 +172,7 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                     response=responses[platform_id],
                     detailedScores=detailed_scores,
                     topReasons=top_reasons,
+                    judgeEvaluation=judge_evaluation,
                 )
             )
 
