@@ -18,7 +18,9 @@ from app.services.llm.ai_platform_service import AIPlatformService
 from app.services.comparison.audit_scorer import AuditScorer
 from app.services.embedding.similarity_processor import SimilarityProcessor
 from app.services.judgment.judge_llm_service import JudgeLLMService
-from app.utils.platform_mapping import get_platform_name
+from app.utils.platform_mapping import get_platform_name, get_adapter_name
+from app.adapters.base import AdapterRegistry
+from app.domain.schemas import AdapterInvocation
 
 
 def create_comparison(
@@ -55,20 +57,41 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
         scorer = AuditScorer()
         judge_service = JudgeLLMService()
 
-        # Get responses from all platforms
+        # Get responses from all platforms with metadata
         # selected_platforms is JSON column storing a list - cast for type checker
         selected_platforms_list: list[str] = comparison.selected_platforms if isinstance(comparison.selected_platforms, list) else []  # type: ignore[assignment]
         responses: dict[str, str] = {}
+        response_metadata: dict[str, dict[str, Any]] = {}  # Store metadata for each platform
         total_platforms = len(selected_platforms_list)
 
         for idx, platform_id in enumerate(selected_platforms_list):
             try:
                 prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
-                response = await ai_service.get_response(platform_id, prompt_text)
-                responses[platform_id] = response
+                # Get full adapter response to access metadata
+                adapter_name = get_adapter_name(platform_id)
+                adapter = AdapterRegistry.get(adapter_name)
+                
+                if adapter:
+                    invocation = AdapterInvocation(
+                        adapter_id=adapter_name,
+                        instructions=prompt_text,
+                    )
+                    adapter_response = await adapter.run_async(invocation)
+                    responses[platform_id] = adapter_response.text
+                    # Store metadata for source extraction
+                    if adapter_response.raw:
+                        response_metadata[platform_id] = adapter_response.raw if isinstance(adapter_response.raw, dict) else {}
+                    else:
+                        response_metadata[platform_id] = {}
+                else:
+                    # Fallback to simple text response
+                    response = await ai_service.get_response(platform_id, prompt_text)
+                    responses[platform_id] = response
+                    response_metadata[platform_id] = {}
             except Exception as e:
                 # Store error but continue with other platforms
                 responses[platform_id] = f"Error: {str(e)}"
+                response_metadata[platform_id] = {}
             
             comparison.progress = int((idx + 1) / total_platforms * 40)  # 40% for responses  # type: ignore[assignment]
             db.commit()
@@ -116,12 +139,15 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
             prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
             
             # Calculate detailed audit scores
+            # Pass metadata for source authenticity checking
+            platform_metadata = response_metadata.get(platform_id, {})
             detailed_scores = await scorer.calculate_scores(
                 platform_id,
                 platform_name,
                 responses[platform_id],
                 judge_platform_id,
                 responses,
+                platform_metadata=platform_metadata,
             )
 
             top_reasons = await scorer.generate_top_reasons(

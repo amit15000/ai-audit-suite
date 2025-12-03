@@ -83,6 +83,38 @@ class AdapterSettings(BaseSettings):
         return self
 
 
+class ExternalAPISettings(BaseSettings):
+    """External API configuration settings for fact-checking and verification."""
+
+    model_config = SettingsConfigDict(env_prefix="EXTERNAL_API_")
+
+    # Google Custom Search API (for factual accuracy checking)
+    google_custom_search_api_key: str | None = None
+    google_custom_search_cx: str | None = None
+    
+    # Perspective API (for toxicity detection)
+    perspective_api_key: str | None = None
+    
+    # Copyscape API (for plagiarism checking)
+    copyscape_api_key: str | None = None
+    copyscape_username: str | None = None
+
+    @model_validator(mode="after")
+    def load_api_keys_from_env(self) -> "ExternalAPISettings":
+        """Load external API keys from environment variables."""
+        if not self.google_custom_search_api_key:
+            self.google_custom_search_api_key = os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY") or os.getenv("EXTERNAL_API_GOOGLE_CUSTOM_SEARCH_API_KEY")
+        if not self.google_custom_search_cx:
+            self.google_custom_search_cx = os.getenv("GOOGLE_CUSTOM_SEARCH_CX") or os.getenv("EXTERNAL_API_GOOGLE_CUSTOM_SEARCH_CX")
+        if not self.perspective_api_key:
+            self.perspective_api_key = os.getenv("PERSPECTIVE_API_KEY") or os.getenv("EXTERNAL_API_PERSPECTIVE_API_KEY")
+        if not self.copyscape_api_key:
+            self.copyscape_api_key = os.getenv("COPYSCAPE_API_KEY") or os.getenv("EXTERNAL_API_COPYSCAPE_API_KEY")
+        if not self.copyscape_username:
+            self.copyscape_username = os.getenv("COPYSCAPE_USERNAME") or os.getenv("EXTERNAL_API_COPYSCAPE_USERNAME")
+        return self
+
+
 class JWTSettings(BaseSettings):
     """JWT authentication settings."""
 
@@ -116,6 +148,7 @@ class AppSettings(BaseSettings):
     adapter: AdapterSettings = AdapterSettings()
     jwt: JWTSettings = JWTSettings()
     celery: CelerySettings = CelerySettings()
+    external_api: ExternalAPISettings = ExternalAPISettings()
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
 

@@ -18,6 +18,9 @@ class ConsensusScorer:
 
         Consensus score is the average similarity of a response to all other responses.
         Higher scores indicate the response is more similar to the group (higher consensus).
+        
+        Enhanced to calculate agreement percentage across models.
+        Example: 4 models agree → 90% consensus
 
         Args:
             similarity_matrix: Nested dictionary of pairwise similarities
@@ -64,6 +67,43 @@ class ConsensusScorer:
         )
 
         return consensus_scores
+
+    @staticmethod
+    def calculate_agreement_percentage(
+        similarity_matrix: Dict[str, Dict[str, float]],
+        threshold: float = 0.7,
+    ) -> Dict[str, float]:
+        """Calculate agreement percentage for each model.
+        
+        Agreement percentage shows how many models agree with this model.
+        Example: 4 models agree → 90% consensus
+        
+        Args:
+            similarity_matrix: Nested dictionary of pairwise similarities
+            threshold: Similarity threshold to consider as "agreement" (default: 0.7)
+            
+        Returns:
+            Dictionary mapping identifier to agreement percentage (0-100)
+        """
+        if not similarity_matrix:
+            raise ValueError("Similarity matrix cannot be empty")
+        
+        total_models = len(similarity_matrix)
+        agreement_percentages: Dict[str, float] = {}
+        
+        for response_id, similarities in similarity_matrix.items():
+            # Count how many models agree (similarity >= threshold)
+            agreeing_models = sum(
+                1 for other_id, sim in similarities.items()
+                if other_id != response_id and sim >= threshold
+            )
+            
+            # Calculate percentage (include self, so total is total_models)
+            # Agreement percentage = (agreeing_models + 1) / total_models * 100
+            agreement_pct = ((agreeing_models + 1) / total_models) * 100
+            agreement_percentages[response_id] = agreement_pct
+        
+        return agreement_percentages
 
     @staticmethod
     def calculate_weighted_consensus_scores(

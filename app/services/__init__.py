@@ -32,6 +32,10 @@ from app.services.embedding import (
 )
 from app.services.judgment import ConsensusEngine, JudgeEngine, JudgeResult
 from app.services.llm import AIPlatformService, MultiLLMCollector, MultiLLMCollectionResult
+from app.services.promotion import LLMRegistry
+from app.services.promotion.payment_service import PaymentService
+from app.services.preference import PreferenceCollector
+from app.services.chatbot import ChatbotEvaluationService
 
 __all__ = [
     # Comparison services
@@ -67,5 +71,12 @@ __all__ = [
     "AIPlatformService",
     "MultiLLMCollector",
     "MultiLLMCollectionResult",
+    # Promotion services
+    "LLMRegistry",
+    "PaymentService",
+    # Preference services
+    "PreferenceCollector",
+    # Chatbot services
+    "ChatbotEvaluationService",
 ]
 

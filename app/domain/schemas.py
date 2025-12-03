@@ -2,9 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class ScoreColor(str, Enum):
+    """Color enum for score visualization."""
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
 
 
 class AdapterInvocation(BaseModel):
@@ -69,7 +77,8 @@ class JudgmentScores(BaseModel):
     safety: int
     hallucination_risk: int
 
-    @validator("*")
+    @field_validator("*")
+    @classmethod
     def _in_range(cls, value: int) -> int:
         if not 0 <= value <= 10:
             raise ValueError("Scores must be between 0 and 10 inclusive.")
@@ -174,11 +183,19 @@ class AuditScore(BaseModel):
     """Schema for individual audit score."""
 
     name: str = Field(..., description="Score name (e.g., 'Hallucination Score')")
-    value: int = Field(..., ge=0, le=10, description="Score value (0-10)")
-    maxValue: int = Field(default=10, description="Maximum possible score")
+    value: int = Field(..., ge=0, le=100, description="Score value (0-10 for most scores, 0-100 for Hallucination Score)")
+    maxValue: int = Field(default=10, description="Maximum possible score (10 for most scores, 100 for Hallucination Score)")
     category: str = Field(..., description="Category grouping (e.g., 'Accuracy', 'Safety')")
     explanation: str = Field(default="", description="Detailed explanation of why this score was assigned")
+    color: Optional[ScoreColor] = Field(None, description="Color indicator for dashboard visualization (green/yellow/red)")
     # Note: isCritical can be computed from value <= 4, so it's redundant and removed
+    
+    @model_validator(mode='after')
+    def validate_value_range(self):
+        """Validate that value is within 0 to maxValue range."""
+        if self.value > self.maxValue:
+            raise ValueError(f"Score value {self.value} exceeds maxValue {self.maxValue}")
+        return self
 
 
 class AuditorDetailedScores(BaseModel):

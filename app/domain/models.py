@@ -252,3 +252,117 @@ class SimilarityAnalysis(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
+
+class LLMProvider(Base):
+    """ORM model for LLM providers in the promotion platform."""
+
+    __tablename__ = "llm_providers"
+
+    id = Column(String, primary_key=True, index=True)
+    company_name = Column(String, nullable=False)
+    provider_name = Column(String, nullable=False, unique=True, index=True)
+    api_endpoint = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    is_approved = Column(Boolean, default=False, nullable=False, index=True)
+    is_promoted = Column(Boolean, default=False, nullable=False, index=True)
+    promotion_tier = Column(String, default="free", nullable=False)  # free, basic, premium
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<LLMProvider(id={self.id}, provider_name={self.provider_name}, is_approved={self.is_approved})>"
+
+
+class UserPreference(Base):
+    """ORM model for user output preferences."""
+
+    __tablename__ = "user_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    comparison_id = Column(String, ForeignKey("comparisons.id"), nullable=True, index=True)
+    preferred_provider = Column(String, nullable=False)
+    preference_reason = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserPreference(id={self.id}, user_id={self.user_id}, preferred_provider={self.preferred_provider})>"
+
+
+class PromotionPayment(Base):
+    """ORM model for LLM promotion payments."""
+
+    __tablename__ = "promotion_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider_id = Column(String, ForeignKey("llm_providers.id"), nullable=False, index=True)
+    tier = Column(String, nullable=False)  # basic, premium
+    amount = Column(String, nullable=False)
+    payment_status = Column(String, default="pending", nullable=False)  # pending, completed, failed
+    payment_method = Column(String, nullable=True)
+    transaction_id = Column(String, nullable=True, unique=True, index=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PromotionPayment(id={self.id}, provider_id={self.provider_id}, tier={self.tier}, status={self.payment_status})>"
+
+
+class ChatbotEvaluation(Base):
+    """ORM model for chatbot evaluation jobs."""
+
+    __tablename__ = "chatbot_evaluations"
+
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    chatbot_url = Column(String, nullable=True)
+    chatbot_api_key = Column(String, nullable=True)
+    status = Column(String, default="pending", nullable=False, index=True)  # pending, processing, completed, failed
+    questions = Column(JSON, nullable=False)  # List of original questions
+    results = Column(JSON, nullable=True)  # Evaluation results
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<ChatbotEvaluation(id={self.id}, status={self.status})>"
+
+
+class QuestionVariation(Base):
+    """ORM model for question variations in chatbot evaluation."""
+
+    __tablename__ = "question_variations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evaluation_id = Column(String, ForeignKey("chatbot_evaluations.id"), nullable=False, index=True)
+    original_question = Column(Text, nullable=False)
+    variation_text = Column(Text, nullable=False)
+    variation_type = Column(String, nullable=True)  # typo, paraphrase, rephrase, etc.
+    correct_answer = Column(Text, nullable=True)  # Generated correct answer
+    chatbot_response = Column(Text, nullable=True)
+    is_correct = Column(Boolean, nullable=True)
+    similarity_score = Column(String, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<QuestionVariation(id={self.id}, evaluation_id={self.evaluation_id})>"
+

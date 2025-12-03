@@ -10,7 +10,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api.v1.routers import auth, comparison, multi_llm, responses, similarity, ui
+from app.api.v1.routers import (
+    auth,
+    chatbot_evaluation,
+    comparison,
+    llm_promotion,
+    multi_llm,
+    promotion_payment,
+    responses,
+    similarity,
+    ui,
+    user_preference,
+)
 from app.core import configure_logging, get_settings
 from app.core.config import AppSettings
 from app.domain.schemas import AuditRequest, AuditResponse
@@ -75,6 +86,10 @@ def create_app(settings: AppSettings) -> FastAPI:
     app.include_router(responses.router)
     app.include_router(similarity.router)
     app.include_router(ui.router)
+    app.include_router(llm_promotion.router)
+    app.include_router(user_preference.router)
+    app.include_router(promotion_payment.router)
+    app.include_router(chatbot_evaluation.router)
 
     @app.post("/audit", response_model=AuditResponse)
     async def audit_endpoint(request: AuditRequest) -> AuditResponse:

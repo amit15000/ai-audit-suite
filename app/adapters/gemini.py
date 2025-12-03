@@ -132,6 +132,7 @@ class GeminiAdapter(BaseAdapter):
             completion_tokens = usage_info.get("candidatesTokenCount")
             total_tokens = usage_info.get("totalTokenCount") or int(estimated_tokens)
 
+            # Build raw payload with full response data including grounding metadata
             raw_payload: Dict[str, Any] = {
                 "adapter_id": invocation.adapter_id,
                 "model": self._model,
@@ -141,8 +142,12 @@ class GeminiAdapter(BaseAdapter):
                     "total_tokens": total_tokens,
                 },
                 "response_id": candidate.get("finishReason", "unknown"),
-                "candidates": len(candidates),
+                "candidates": data.get("candidates", []),  # Include full candidates with grounding metadata
             }
+            
+            # Also include top-level metadata if present
+            if "groundingMetadata" in data:
+                raw_payload["groundingMetadata"] = data["groundingMetadata"]
 
             logger.info(
                 "Gemini response generated",
