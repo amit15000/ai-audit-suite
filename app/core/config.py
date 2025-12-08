@@ -116,7 +116,25 @@ class AppSettings(BaseSettings):
     adapter: AdapterSettings = AdapterSettings()
     jwt: JWTSettings = JWTSettings()
     celery: CelerySettings = CelerySettings()
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+        "https://ai-audit-frontend.vercel.app",
+    ]
+
+    @model_validator(mode="after")
+    def load_cors_origins_from_env(self) -> "AppSettings":
+        """Load CORS origins from environment variable if set."""
+        cors_env = os.getenv("CORS_ORIGINS")
+        if cors_env:
+            # Support comma-separated list from environment variable
+            origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+            if "*" in origins:
+                self.cors_origins = ["*"]
+            else:
+                self.cors_origins = origins
+        return self
 
 
 _settings_cache: AppSettings | None = None
