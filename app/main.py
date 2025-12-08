@@ -68,15 +68,34 @@ def create_app(settings: AppSettings) -> FastAPI:
             },
         )
     
-    # CORS configuration
+    # CORS configuration - Allow all origins
     cors_origins = settings.cors_origins if hasattr(settings, "cors_origins") else ["*"]
+    # Handle wildcard origin - can't use credentials with "*"
+    allow_credentials = "*" not in cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=cors_origins,  # ["*"] allows all origins
+        allow_credentials=allow_credentials,  # False when using "*"
+        allow_methods=["*"],  # Allow all HTTP methods
+        allow_headers=["*"],  # Allow all headers
     )
+    
+    # Root endpoint - define early to ensure it takes precedence
+    @app.get("/")
+    def root() -> Dict[str, Any]:
+        """Root endpoint to verify backend is running."""
+        return {
+            "status": "running",
+            "message": "AI Audit Backend API is running",
+            "version": "0.1.0",
+            "endpoints": {
+                "health": "/health",
+                "metrics": "/metrics",
+                "docs": "/docs",
+                "api": "/api/v1"
+            }
+        }
+    
     service = AuditService()
 
     # Include API routers

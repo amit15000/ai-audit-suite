@@ -11,24 +11,36 @@ from app.utils.security import create_access_token, create_refresh_token, get_pa
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
-    """Authenticate a user by email and password."""
+    """Authenticate a user by email and password (DUMMY MODE - always succeeds)."""
+    # DUMMY AUTH: Always return/create user without password verification
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        return None
-    if not verify_password(password, user.hashed_password):
-        return None
+        # Auto-create user if doesn't exist
+        import uuid
+        user = User(
+            id=f"user_{uuid.uuid4().hex[:12]}",
+            email=email,
+            hashed_password="dummy_hash",  # Not used in dummy mode
+            name=email.split("@")[0],  # Use email prefix as name
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     return user
 
 
 def create_user(db: Session, email: str, password: str, name: str | None = None) -> User:
-    """Create a new user."""
+    """Create a new user (DUMMY MODE - no password hashing)."""
     import uuid
     
+    # DUMMY AUTH: Don't hash password, just use dummy value
     user = User(
         id=f"user_{uuid.uuid4().hex[:12]}",
         email=email,
-        hashed_password=get_password_hash(password),
-        name=name,
+        hashed_password="dummy_hash",  # Not used in dummy mode
+        name=name or email.split("@")[0],
+        is_active=True,
     )
     db.add(user)
     db.commit()

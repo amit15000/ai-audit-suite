@@ -42,20 +42,11 @@ async def login(
     request: LoginRequest,
     db: Session = Depends(get_db),
 ) -> LoginResponse:
-    """User login endpoint."""
+    """User login endpoint (DUMMY MODE - accepts any email/password)."""
     try:
+        # DUMMY AUTH: Always authenticate successfully
         user = authenticate_user(db, request.email, request.password)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "INVALID_CREDENTIALS",
-                        "message": "Invalid email or password",
-                    },
-                },
-            )
+        # authenticate_user now always returns a user (creates if needed)
         
         tokens = create_tokens_for_user(user)
         
@@ -98,24 +89,17 @@ async def register(
     request: RegisterRequest,
     db: Session = Depends(get_db),
 ) -> RegisterResponse:
-    """User registration endpoint."""
+    """User registration endpoint (DUMMY MODE - allows duplicate emails)."""
     try:
-        # Check if user already exists
+        # DUMMY AUTH: Allow duplicate emails, just get or create user
         existing_user = get_user_by_email(db, request.email)
         if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "USER_ALREADY_EXISTS",
-                        "message": "A user with this email already exists",
-                    },
-                },
-            )
+            # If user exists, just return tokens for existing user
+            user = existing_user
+        else:
+            # Create new user
+            user = create_user(db, request.email, request.password, request.name)
         
-        # Create new user
-        user = create_user(db, request.email, request.password, request.name)
         tokens = create_tokens_for_user(user)
         
         return RegisterResponse(
@@ -161,61 +145,37 @@ async def refresh_token(
     request: RefreshTokenRequest,
     db: Session = Depends(get_db),
 ) -> RefreshTokenResponse:
-    """Refresh access token endpoint."""
+    """Refresh access token endpoint (DUMMY MODE - always succeeds)."""
     try:
-        # Decode and verify refresh token
+        # DUMMY AUTH: Try to decode token, but always succeed with dummy user if needed
         payload = decode_token(request.refreshToken)
-        if payload is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "INVALID_TOKEN",
-                        "message": "Invalid or expired refresh token",
-                    },
-                },
-            )
+        user_id: str | None = None
         
-        user_id: str | None = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "INVALID_TOKEN",
-                        "message": "Invalid token payload",
-                    },
-                },
-            )
+        if payload:
+            user_id = payload.get("sub")
         
-        # Get user from database
-        user = db.query(User).filter(User.id == user_id).first()
+        # Get user from database or create dummy user
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+        else:
+            user = None
+        
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "USER_NOT_FOUND",
-                        "message": "User not found",
-                    },
-                },
-            )
-        
-        is_active = bool(user.is_active)  # type: ignore[arg-type]
-        if not is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "success": False,
-                    "error": {
-                        "code": "ACCOUNT_INACTIVE",
-                        "message": "User account is inactive",
-                    },
-                },
-            )
+            # Create/get default dummy user
+            import uuid
+            default_email = "dummy@example.com"
+            user = db.query(User).filter(User.email == default_email).first()
+            if not user:
+                user = User(
+                    id=f"user_{uuid.uuid4().hex[:12]}",
+                    email=default_email,
+                    hashed_password="dummy_hash",
+                    name="Dummy User",
+                    is_active=True,
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
         
         # Generate new access token (keep the same refresh token)
         user_id_str = str(user.id)  # type: ignore[arg-type]

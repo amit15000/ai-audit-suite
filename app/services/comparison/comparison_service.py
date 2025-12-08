@@ -324,3 +324,122 @@ def get_comparison_status(
         "pendingPlatforms": pending_platforms,
     }
 
+
+def get_user_comparisons(
+    db: Session,
+    user_id: str,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> dict[str, Any]:
+    """Get list of comparisons for a specific user with filtering and pagination.
+    
+    Args:
+        db: Database session
+        user_id: User ID to filter comparisons
+        status: Optional status filter (queued, processing, completed, failed)
+        limit: Maximum number of results (default: 50, max: 100)
+        offset: Number of results to skip (default: 0)
+        sort_by: Field to sort by (created_at, status, completed_at) (default: created_at)
+        sort_order: Sort order (asc, desc) (default: desc)
+    
+    Returns:
+        Dictionary with comparisons list, total count, limit, and offset
+    """
+    from sqlalchemy import desc, asc
+    
+    # Validate and clamp limit
+    limit = min(max(1, limit), 100)
+    offset = max(0, offset)
+    
+    # Build query - always filter by user_id for security
+    query = db.query(Comparison).filter(Comparison.user_id == user_id)
+    
+    # Apply status filter if provided
+    if status:
+        query = query.filter(Comparison.status == status)
+    
+    # Get total count before pagination
+    total_count = query.count()
+    
+    # Apply sorting
+    if sort_by == "created_at":
+        order_func = desc(Comparison.created_at) if sort_order == "desc" else asc(Comparison.created_at)
+    elif sort_by == "completed_at":
+        order_func = desc(Comparison.completed_at) if sort_order == "desc" else asc(Comparison.completed_at)
+    elif sort_by == "status":
+        order_func = desc(Comparison.status) if sort_order == "desc" else asc(Comparison.status)
+    else:
+        # Default to created_at desc
+        order_func = desc(Comparison.created_at)
+    
+    query = query.order_by(order_func)
+    
+    # Apply pagination
+    comparisons = query.offset(offset).limit(limit).all()
+    
+    # Format results
+    comparison_list = []
+    for comp in comparisons:
+        # Extract summary information
+        winner_info = None
+        platforms_count = 0
+        if comp.results and isinstance(comp.results, dict):
+            winner_info = comp.results.get("winner")
+            platforms_list = comp.results.get("platforms", [])
+            if isinstance(platforms_list, list):
+                platforms_count = len(platforms_list)
+        
+        # Get selected platforms count
+        selected_platforms_list: list[str] = []
+        if isinstance(comp.selected_platforms, list):
+            selected_platforms_list = comp.selected_platforms
+        
+        comparison_list.append({
+            "id": str(comp.id),  # type: ignore[arg-type]
+            "messageId": str(comp.message_id),  # type: ignore[arg-type]
+            "prompt": str(comp.prompt)[:200] + ("..." if len(str(comp.prompt)) > 200 else ""),  # type: ignore[arg-type]
+            "promptPreview": str(comp.prompt)[:100] + ("..." if len(str(comp.prompt)) > 100 else ""),  # type: ignore[arg-type]
+            "judgePlatform": str(comp.judge_platform),  # type: ignore[arg-type]
+            "selectedPlatforms": selected_platforms_list,
+            "platformsCount": platforms_count,
+            "status": str(comp.status),  # type: ignore[arg-type]
+            "progress": int(comp.progress),  # type: ignore[arg-type]
+            "winner": winner_info,
+            "createdAt": comp.created_at.isoformat() if comp.created_at else None,  # type: ignore[arg-type]
+            "completedAt": comp.completed_at.isoformat() if comp.completed_at else None,  # type: ignore[arg-type]
+            "errorMessage": comp.error_message,  # type: ignore[arg-type]
+        })
+    
+    return {
+        "comparisons": comparison_list,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+        "hasMore": (offset + limit) < total_count,
+    }
+
+
+def verify_comparison_ownership(
+    db: Session,
+    comparison_id: str,
+    user_id: str,
+) -> bool:
+    """Verify that a comparison belongs to a specific user.
+    
+    Args:
+        db: Database session
+        comparison_id: Comparison ID to check
+        user_id: User ID to verify ownership
+    
+    Returns:
+        True if comparison belongs to user, False otherwise
+    """
+    comparison = db.query(Comparison).filter(
+        Comparison.id == comparison_id,
+        Comparison.user_id == user_id,
+    ).first()
+    return comparison is not None
+

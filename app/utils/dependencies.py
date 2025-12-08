@@ -18,39 +18,53 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    """Get the current authenticated user from JWT token."""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    """Get the current authenticated user (DUMMY MODE - always returns dummy user, no token required)."""
+    # DUMMY AUTH: Always return a dummy user, ignore token validation
+    # Works even without token - perfect for development/testing
+    import uuid
     
-    if credentials is None:
-        raise credentials_exception
+    # Try to extract user_id from token if provided, otherwise use default
+    user_id = None
+    if credentials and credentials.credentials:
+        try:
+            payload = decode_token(credentials.credentials)
+            if payload:
+                user_id = payload.get("sub")
+        except Exception:
+            pass  # Ignore token errors in dummy mode
     
-    token = credentials.credentials
-    payload = decode_token(token)
-    if payload is None:
-        # Provide more helpful error message
-        import structlog
-        logger = structlog.get_logger(__name__)
-        logger.warning("auth.token_invalid", message="Token validation failed - may be expired or invalid")
-        raise credentials_exception
+    # If we have a user_id from token, try to get that user
+    if user_id:
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                return user
+        except Exception:
+            pass  # Ignore DB errors, fall through to create dummy user
     
-    user_id: str | None = payload.get("sub")
-    if user_id is None:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
-        raise credentials_exception
-    
-    is_active = bool(user.is_active)  # type: ignore[arg-type]
-    if not is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+    # Otherwise, get or create a default dummy user
+    default_email = "dummy@example.com"
+    try:
+        user = db.query(User).filter(User.email == default_email).first()
+        if not user:
+            user = User(
+                id=f"user_{uuid.uuid4().hex[:12]}",
+                email=default_email,
+                hashed_password="dummy_hash",
+                name="Dummy User",
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+    except Exception:
+        # If DB fails, create a minimal user object (won't persist but will work for API)
+        return User(
+            id=f"user_{uuid.uuid4().hex[:12]}",
+            email=default_email,
+            hashed_password="dummy_hash",
+            name="Dummy User",
+            is_active=True,
         )
-    
-    return user
 

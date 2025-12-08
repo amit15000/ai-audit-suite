@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+import boto3
+from botocore.client import BaseClient
+from botocore.exceptions import ClientError, NoCredentialsError
+
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.repositories import AuditRepository, LLMResponseRepository
@@ -15,8 +19,85 @@ class ObjectStoreClient:
 
     def __init__(self) -> None:
         settings = get_settings().storage
+        self._use_s3 = settings.use_s3
         self._root = Path(settings.local_root)
         self._root.mkdir(parents=True, exist_ok=True)
+        
+        self._s3_client: BaseClient | None = None
+        if self._use_s3:
+            try:
+                self._s3_client = self._create_s3_client(settings)
+                # Ensure bucket exists
+                self._ensure_bucket_exists(settings.s3_bucket)
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.warning(
+                    "s3_init_failed",
+                    error=str(e),
+                    message="S3 initialization failed, falling back to local filesystem"
+                )
+                self._use_s3 = False
+                self._s3_client = None
+
+    def _create_s3_client(self, settings) -> BaseClient:
+        """Create and configure S3 client."""
+        config = {
+            "endpoint_url": settings.s3_endpoint,
+        }
+        
+        # Add credentials if provided
+        if settings.s3_access_key_id and settings.s3_secret_access_key:
+            config["aws_access_key_id"] = settings.s3_access_key_id
+            config["aws_secret_access_key"] = settings.s3_secret_access_key
+        
+        # Add region if provided (required for AWS S3, optional for MinIO)
+        if settings.s3_region:
+            config["region_name"] = settings.s3_region
+        
+        # For MinIO and other S3-compatible services, we need to disable SSL verification
+        # if using HTTP (localhost)
+        if settings.s3_endpoint.startswith("http://"):
+            from botocore.config import Config
+            config["config"] = Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"}
+            )
+        
+        return boto3.client("s3", **config)
+
+    def _ensure_bucket_exists(self, bucket_name: str) -> None:
+        """Ensure the S3 bucket exists, create it if it doesn't."""
+        if not self._s3_client:
+            return
+        
+        try:
+            self._s3_client.head_bucket(Bucket=bucket_name)
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "404":
+                # Bucket doesn't exist, create it
+                try:
+                    if self._s3_client._client_config.region_name:
+                        # AWS S3 requires region
+                        self._s3_client.create_bucket(
+                            Bucket=bucket_name,
+                            CreateBucketConfiguration={
+                                "LocationConstraint": self._s3_client._client_config.region_name
+                            }
+                        )
+                    else:
+                        # MinIO and other S3-compatible services
+                        self._s3_client.create_bucket(Bucket=bucket_name)
+                except ClientError as create_error:
+                    import structlog
+                    logger = structlog.get_logger(__name__)
+                    logger.error(
+                        "s3_bucket_creation_failed",
+                        error=str(create_error),
+                        bucket=bucket_name
+                    )
+                    raise
 
     def persist(self, key: str, payload: Dict[str, Any]) -> str:
         """Persist a JSON payload to object storage.
@@ -26,8 +107,40 @@ class ObjectStoreClient:
             payload: Data to persist
 
         Returns:
-            Path to the stored file
+            Path or S3 key to the stored file
         """
+        if self._use_s3 and self._s3_client:
+            return self._persist_to_s3(key, payload)
+        else:
+            return self._persist_to_local(key, payload)
+
+    def _persist_to_s3(self, key: str, payload: Dict[str, Any]) -> str:
+        """Persist data to S3-compatible storage."""
+        settings = get_settings().storage
+        s3_key = f"{key}.json"
+        
+        try:
+            self._s3_client.put_object(
+                Bucket=settings.s3_bucket,
+                Key=s3_key,
+                Body=json.dumps(payload, indent=2).encode("utf-8"),
+                ContentType="application/json"
+            )
+            return f"s3://{settings.s3_bucket}/{s3_key}"
+        except (ClientError, NoCredentialsError) as e:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.error(
+                "s3_persist_failed",
+                error=str(e),
+                key=s3_key,
+                message="Falling back to local filesystem"
+            )
+            # Fallback to local storage
+            return self._persist_to_local(key, payload)
+
+    def _persist_to_local(self, key: str, payload: Dict[str, Any]) -> str:
+        """Persist data to local filesystem."""
         target = self._root / f"{key}.json"
         target.write_text(json.dumps(payload, indent=2))
         return str(target)

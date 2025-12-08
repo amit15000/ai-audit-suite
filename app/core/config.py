@@ -32,6 +32,10 @@ class StorageSettings(BaseSettings):
 
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "w-audit"
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    s3_region: str | None = None
+    use_s3: bool = True  # Set to False to use local filesystem instead
     local_root: Path = Path("var/object_store")
 
 
@@ -149,7 +153,22 @@ class AppSettings(BaseSettings):
     jwt: JWTSettings = JWTSettings()
     celery: CelerySettings = CelerySettings()
     external_api: ExternalAPISettings = ExternalAPISettings()
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: list[str] = ["*"]  # Allow all origins by default
+
+    @model_validator(mode="after")
+    def load_cors_origins_from_env(self) -> "AppSettings":
+        """Load CORS origins from environment variable if set."""
+        cors_env = os.getenv("CORS_ORIGINS")
+        if cors_env:
+            # Support comma-separated list from environment variable
+            # If "*" is provided, allow all origins
+            origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+            if "*" in origins:
+                self.cors_origins = ["*"]
+            else:
+                self.cors_origins = origins
+        # Default to allowing all origins if not specified
+        return self
 
 
 _settings_cache: AppSettings | None = None

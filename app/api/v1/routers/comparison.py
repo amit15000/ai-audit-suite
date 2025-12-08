@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -16,6 +16,8 @@ from app.services.comparison.comparison_service import (
     create_comparison,
     get_comparison_results,
     get_comparison_status,
+    get_user_comparisons,
+    verify_comparison_ownership,
 )
 # Removed Celery task import - processing directly without Redis
 from app.utils.dependencies import get_current_user
@@ -23,6 +25,65 @@ from app.utils.dependencies import get_current_user
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/comparison", tags=["comparison"])
+
+
+@router.get(
+    "/",
+    status_code=status.HTTP_200_OK,
+    summary="List user's comparisons",
+    description="Get a paginated list of all comparisons for the current user",
+)
+async def list_comparisons(
+    status_filter: str | None = Query(None, alias="status", description="Filter by status (queued, processing, completed, failed)"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    sort_by: str = Query("created_at", description="Field to sort by (created_at, completed_at, status)"),
+    sort_order: str = Query("desc", description="Sort order (asc, desc)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List all comparisons for the current user with filtering and pagination."""
+    try:
+        # Validate sort_by
+        valid_sort_fields = ["created_at", "completed_at", "status"]
+        if sort_by not in valid_sort_fields:
+            sort_by = "created_at"
+        
+        # Validate sort_order
+        if sort_order not in ["asc", "desc"]:
+            sort_order = "desc"
+        
+        # Validate status filter
+        valid_statuses = ["queued", "processing", "completed", "failed"]
+        if status_filter and status_filter not in valid_statuses:
+            status_filter = None
+        
+        results = get_user_comparisons(
+            db=db,
+            user_id=current_user.id,  # type: ignore[arg-type]
+            status=status_filter,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        
+        return {
+            "success": True,
+            "data": results,
+        }
+    except Exception as e:
+        logger.error("comparison.list.error", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": f"Failed to list comparisons: {str(e)}",
+                },
+            },
+        ) from e
 
 
 @router.post(
@@ -136,6 +197,19 @@ async def get_results(
 ) -> dict:
     """Get comparison results."""
     try:
+        # Verify ownership first
+        if not verify_comparison_ownership(db, comparison_id, current_user.id):  # type: ignore[arg-type]
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "success": False,
+                    "error": {
+                        "code": "FORBIDDEN",
+                        "message": "You do not have access to this comparison",
+                    },
+                },
+            )
+        
         results = get_comparison_results(db, comparison_id, judge)
         
         if not results:
@@ -215,6 +289,19 @@ async def get_status(
 ) -> dict:
     """Get comparison status."""
     try:
+        # Verify ownership first
+        if not verify_comparison_ownership(db, comparison_id, current_user.id):  # type: ignore[arg-type]
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "success": False,
+                    "error": {
+                        "code": "FORBIDDEN",
+                        "message": "You do not have access to this comparison",
+                    },
+                },
+            )
+        
         status_data = get_comparison_status(db, comparison_id)
         
         if not status_data:
