@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, validator
 
@@ -170,6 +170,166 @@ class SubmitComparisonRequest(BaseModel):
     judge: str = Field(default="openai", description="Platform ID to use as judge/evaluator")
 
 
+class HallucinationSubScore(BaseModel):
+    """Schema for hallucination sub-score metrics."""
+
+    factCheckingScore: int = Field(..., ge=0, le=10, description="Score for fact-checking against external sources (0-10)")
+    fabricatedCitationsScore: int = Field(..., ge=0, le=10, description="Score for detecting fabricated citations (0-10)")
+    contradictoryInfoScore: int = Field(..., ge=0, le=10, description="Score for identifying contradictory information (0-10)")
+    multiLLMComparisonScore: int = Field(..., ge=0, le=10, description="Score for comparing against multiple LLMs (0-10)")
+
+
+class AccuracySubScore(BaseModel):
+    """Schema for accuracy sub-score metrics."""
+
+    googleBingWikipediaScore: int = Field(..., ge=0, le=10, description="Score for Google/Bing search Wikipedia verification (0-10)")
+    verifiedDatabasesScore: int = Field(..., ge=0, le=10, description="Score for verified databases (medical, legal, financial, HR) (0-10)")
+    internalCompanyDocsScore: int = Field(..., ge=0, le=10, description="Score for internal company docs verification (0-10)")
+
+
+class MultiLLMConsensusSubScore(BaseModel):
+    """Schema for multi-LLM consensus sub-score metrics."""
+
+    fourModelAgree: float = Field(..., ge=0, le=100, description="Percentage of 4 model agreement (0-100)")
+    twoModelDisagree: float = Field(..., ge=0, le=100, description="Percentage of 2 model disagreement (0-100)")
+
+
+class DeviationMapSubScore(BaseModel):
+    """Schema for deviation map sub-score metrics."""
+
+    sentenceLevelComparison: float = Field(..., ge=0, le=100, description="Percentage of sentence-level comparison (0-100)")
+    highlightedDifferences: float = Field(..., ge=0, le=100, description="Percentage of highlighted differences (0-100)")
+    colorCodedConflictAreas: float = Field(..., ge=0, le=100, description="Percentage of color-coded conflict areas (0-100)")
+
+
+class SourceAuthenticitySubScore(BaseModel):
+    """Schema for source authenticity checker sub-score metrics."""
+
+    verifiesPapersExist: bool = Field(..., description="Whether papers existence is verified (Yes/No)")
+    detectsFakeCitations: bool = Field(..., description="Whether fake citations are detected (Yes/No)")
+    confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
+
+
+class ComplianceSubScore(BaseModel):
+    """Schema for compliance score sub-score metrics."""
+
+    checksUrlsExist: bool = Field(..., description="Whether URLs existence is checked (Yes/No)")
+    verifiesPapersExist: bool = Field(..., description="Whether papers existence is verified (Yes/No)")
+    detectsFakeCitations: bool = Field(..., description="Whether fake citations are detected (Yes/No)")
+    confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
+
+
+class BiasFairnessSubScore(BaseModel):
+    """Schema for bias & fairness score sub-score metrics."""
+
+    genderBias: bool = Field(..., description="Whether gender bias is detected (Yes/No)")
+    racialBias: bool = Field(..., description="Whether racial bias is detected (Yes/No)")
+    religiousBias: bool = Field(..., description="Whether religious bias is detected (Yes/No)")
+    politicalBias: bool = Field(..., description="Whether political bias is detected (Yes/No)")
+    culturalInsensitivity: bool = Field(..., description="Whether cultural insensitivity is detected (Yes/No)")
+
+
+class SafetySubScore(BaseModel):
+    """Schema for safety score sub-score metrics."""
+
+    toxicity: float = Field(..., ge=0, le=100, description="Toxicity percentage (0-100)")
+    hateSpeech: float = Field(..., ge=0, le=100, description="Hate speech percentage (0-100)")
+    sexualContent: float = Field(..., ge=0, le=100, description="Sexual content percentage (0-100)")
+    violence: float = Field(..., ge=0, le=100, description="Violence percentage (0-100)")
+    dangerousInstructions: float = Field(..., ge=0, le=100, description="Dangerous instructions percentage (0-100)")
+    selfHarmSuggestions: float = Field(..., ge=0, le=100, description="Self-harm suggestions percentage (0-100)")
+
+
+class ContextAdherenceSubScore(BaseModel):
+    """Schema for context adherence score sub-score metrics."""
+
+    allInstructions: float = Field(..., ge=0, le=100, description="All instructions adherence percentage (0-100)")
+    toneOfVoice: str = Field(..., description="Tone of voice (e.g., 'Polite', 'Professional', 'Casual')")
+    lengthConstraints: str = Field(..., description="Length constraints adherence (e.g., 'Short', 'Medium', 'Long')")
+    formatRules: float = Field(..., ge=0, le=100, description="Format rules adherence percentage (0-100)")
+    brandVoice: float = Field(..., ge=0, le=100, description="Brand voice adherence percentage (0-100)")
+
+
+class StabilityRobustnessSubScore(BaseModel):
+    """Schema for stability & robustness test sub-score metrics."""
+
+    stability: float = Field(..., ge=0, le=100, description="Stability percentage (0-100)")
+
+
+class PromptSensitivitySubScore(BaseModel):
+    """Schema for prompt sensitivity test sub-score metrics."""
+
+    sensitivity: float = Field(..., ge=0, le=100, description="Sensitivity percentage (0-100)")
+
+
+class AISafetyGuardrailSubScore(BaseModel):
+    """Schema for AI safety guardrail test sub-score metrics."""
+
+    safetyScore: float = Field(..., ge=0, le=100, description="Safety score percentage (0-100)")
+
+
+class AgentActionSafetySubScore(BaseModel):
+    """Schema for agent action safety audit sub-score metrics."""
+
+    safeActionScore: float = Field(..., ge=0, le=100, description="Safe Action Score percentage (0-100)")
+    riskWarnings: float = Field(..., ge=0, le=100, description="Risk warnings percentage (0-100)")
+    allowedBlockedDecisions: float = Field(..., ge=0, le=100, description="Allowed/Blocked decisions percentage (0-100)")
+
+
+class CodeVulnerabilitySubScore(BaseModel):
+    """Schema for code vulnerability auditor sub-score metrics."""
+
+    securityFlaws: float = Field(..., ge=0, le=100, description="Security flaws percentage (0-100)")
+    outdatedLibraries: float = Field(..., ge=0, le=100, description="Outdated libraries percentage (0-100)")
+    injectionRisks: float = Field(..., ge=0, le=100, description="Injection risks percentage (0-100)")
+    logicErrors: float = Field(..., ge=0, le=100, description="Logic errors percentage (0-100)")
+    performanceIssues: float = Field(..., ge=0, le=100, description="Performance issues percentage (0-100)")
+
+
+class DataExtractionAccuracySubScore(BaseModel):
+    """Schema for data extraction accuracy audit sub-score metrics."""
+
+    compareExtractedTextWithGroundTruth: float = Field(..., ge=0, le=100, description="Compare extracted text with ground truth percentage (0-100)")
+    detectExtractionErrors: float = Field(..., ge=0, le=100, description="Detect extraction errors percentage (0-100)")
+    flagMismatchedValues: float = Field(..., ge=0, le=100, description="Flag mismatched values percentage (0-100)")
+
+
+class BrandConsistencySubScore(BaseModel):
+    """Schema for brand consistency audit sub-score metrics."""
+
+    tone: float = Field(..., ge=0, le=100, description="Tone consistency percentage (0-100)")
+    style: float = Field(..., ge=0, le=100, description="Style consistency percentage (0-100)")
+    vocabulary: float = Field(..., ge=0, le=100, description="Vocabulary consistency percentage (0-100)")
+    format: float = Field(..., ge=0, le=100, description="Format consistency percentage (0-100)")
+    grammarLevel: float = Field(..., ge=0, le=100, description="Grammar level consistency percentage (0-100)")
+    brandSafeLanguage: float = Field(..., ge=0, le=100, description="Brand-safe language percentage (0-100)")
+    allowedBlockedDecisions: float = Field(..., ge=0, le=100, description="Allowed/Blocked decisions percentage (0-100)")
+
+
+class AIPlagiarismSubScore(BaseModel):
+    """Schema for AI output plagiarism checker sub-score metrics."""
+
+    copiedSentences: float = Field(..., ge=0, le=100, description="Copied sentences percentage (0-100)")
+    copiedNewsArticles: float = Field(..., ge=0, le=100, description="Copied news articles percentage (0-100)")
+    copiedBooks: float = Field(..., ge=0, le=100, description="Copied books percentage (0-100)")
+    copiedCopyrightedText: float = Field(..., ge=0, le=100, description="Copied copyrighted text percentage (0-100)")
+
+
+class MultiJudgeAIReviewSubScore(BaseModel):
+    """Schema for multi-judge AI review sub-score metrics."""
+
+    modelVoting: float = Field(..., ge=0, le=100, description="Model voting percentage (0-100)")
+    modelScoring: float = Field(..., ge=0, le=100, description="Model scoring percentage (0-100)")
+    modelCritiques: float = Field(..., ge=0, le=100, description="Model critiques percentage (0-100)")
+
+
+class ExplainabilitySubScore(BaseModel):
+    """Schema for explainability score sub-score metrics."""
+
+    explainabilityScore: float = Field(..., ge=0, le=100, description="Explainability Score percentage (0-100)")
+    copiedSentences: float = Field(..., ge=0, le=100, description="Copied sentences percentage (0-100)")
+
+
 class AuditScore(BaseModel):
     """Schema for individual audit score."""
 
@@ -178,6 +338,27 @@ class AuditScore(BaseModel):
     maxValue: int = Field(default=10, description="Maximum possible score")
     category: str = Field(..., description="Category grouping (e.g., 'Accuracy', 'Safety')")
     explanation: str = Field(default="", description="Detailed explanation of why this score was assigned")
+    subScores: Optional[Union[
+        HallucinationSubScore,
+        AccuracySubScore,
+        MultiLLMConsensusSubScore,
+        DeviationMapSubScore,
+        SourceAuthenticitySubScore,
+        ComplianceSubScore,
+        BiasFairnessSubScore,
+        SafetySubScore,
+        ContextAdherenceSubScore,
+        StabilityRobustnessSubScore,
+        PromptSensitivitySubScore,
+        AISafetyGuardrailSubScore,
+        AgentActionSafetySubScore,
+        CodeVulnerabilitySubScore,
+        DataExtractionAccuracySubScore,
+        BrandConsistencySubScore,
+        AIPlagiarismSubScore,
+        MultiJudgeAIReviewSubScore,
+        ExplainabilitySubScore
+    ]] = Field(None, description="Sub-scores for detailed metrics (varies by score type)")
     # Note: isCritical can be computed from value <= 4, so it's redundant and removed
 
 

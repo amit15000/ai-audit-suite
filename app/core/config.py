@@ -103,6 +103,25 @@ class CelerySettings(BaseSettings):
     result_backend: str = "redis://localhost:6379/0"
 
 
+class SupabaseSettings(BaseSettings):
+    """Supabase configuration settings."""
+
+    model_config = SettingsConfigDict(env_prefix="SUPABASE_")
+
+    url: str = ""
+    key: str = ""
+
+    @model_validator(mode="after")
+    def load_from_env(self) -> "SupabaseSettings":
+        """Load Supabase credentials from environment variables."""
+        # Support both SUPABASE_URL and SUPABASE_KEY (prefixed) or direct env vars
+        if not self.url:
+            self.url = os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_PROJECT_URL") or ""
+        if not self.key:
+            self.key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY") or ""
+        return self
+
+
 class AppSettings(BaseSettings):
     """Main application settings."""
 
@@ -116,6 +135,7 @@ class AppSettings(BaseSettings):
     adapter: AdapterSettings = AdapterSettings()
     jwt: JWTSettings = JWTSettings()
     celery: CelerySettings = CelerySettings()
+    supabase: SupabaseSettings = SupabaseSettings()
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://localhost:3001",

@@ -1,7 +1,52 @@
 """Service for calculating audit scores."""
 from __future__ import annotations
 
-from app.domain.schemas import AuditScore, AuditorDetailedScores
+import json
+import re
+from typing import Optional, Union
+
+from app.domain.schemas import (
+    AccuracySubScore,
+    AgentActionSafetySubScore,
+    AIPlagiarismSubScore,
+    AISafetyGuardrailSubScore,
+    AuditScore,
+    AuditorDetailedScores,
+    BiasFairnessSubScore,
+    BrandConsistencySubScore,
+    CodeVulnerabilitySubScore,
+    ComplianceSubScore,
+    ContextAdherenceSubScore,
+    DataExtractionAccuracySubScore,
+    DeviationMapSubScore,
+    ExplainabilitySubScore,
+    HallucinationSubScore,
+    MultiJudgeAIReviewSubScore,
+    MultiLLMConsensusSubScore,
+    PromptSensitivitySubScore,
+    SafetySubScore,
+    SourceAuthenticitySubScore,
+    StabilityRobustnessSubScore,
+)
+from app.services.comparison.accuracy_scorer import AccuracyScorer
+from app.services.comparison.agent_action_safety_scorer import AgentActionSafetyScorer
+from app.services.comparison.ai_plagiarism_scorer import AIPlagiarismScorer
+from app.services.comparison.ai_safety_guardrail_scorer import AISafetyGuardrailScorer
+from app.services.comparison.bias_fairness_scorer import BiasFairnessScorer
+from app.services.comparison.brand_consistency_scorer import BrandConsistencyScorer
+from app.services.comparison.code_vulnerability_scorer import CodeVulnerabilityScorer
+from app.services.comparison.compliance_scorer import ComplianceScorer
+from app.services.comparison.context_adherence_scorer import ContextAdherenceScorer
+from app.services.comparison.data_extraction_accuracy_scorer import DataExtractionAccuracyScorer
+from app.services.comparison.deviation_map_scorer import DeviationMapScorer
+from app.services.comparison.explainability_scorer import ExplainabilityScorer
+from app.services.comparison.hallucination_scorer import HallucinationScorer
+from app.services.comparison.multi_judge_ai_review_scorer import MultiJudgeAIReviewScorer
+from app.services.comparison.multi_llm_consensus_scorer import MultiLLMConsensusScorer
+from app.services.comparison.prompt_sensitivity_scorer import PromptSensitivityScorer
+from app.services.comparison.safety_scorer import SafetyScorer
+from app.services.comparison.source_authenticity_scorer import SourceAuthenticityScorer
+from app.services.comparison.stability_robustness_scorer import StabilityRobustnessScorer
 from app.services.llm.ai_platform_service import AIPlatformService
 from app.utils.platform_mapping import get_platform_name
 
@@ -157,6 +202,25 @@ class AuditScorer:
 
     def __init__(self):
         self.ai_service = AIPlatformService()
+        self.hallucination_scorer = HallucinationScorer()
+        self.accuracy_scorer = AccuracyScorer()
+        self.multi_llm_consensus_scorer = MultiLLMConsensusScorer()
+        self.deviation_map_scorer = DeviationMapScorer()
+        self.source_authenticity_scorer = SourceAuthenticityScorer()
+        self.compliance_scorer = ComplianceScorer()
+        self.bias_fairness_scorer = BiasFairnessScorer()
+        self.safety_scorer = SafetyScorer()
+        self.context_adherence_scorer = ContextAdherenceScorer()
+        self.stability_robustness_scorer = StabilityRobustnessScorer()
+        self.prompt_sensitivity_scorer = PromptSensitivityScorer()
+        self.ai_safety_guardrail_scorer = AISafetyGuardrailScorer()
+        self.agent_action_safety_scorer = AgentActionSafetyScorer()
+        self.code_vulnerability_scorer = CodeVulnerabilityScorer()
+        self.data_extraction_accuracy_scorer = DataExtractionAccuracyScorer()
+        self.brand_consistency_scorer = BrandConsistencyScorer()
+        self.ai_plagiarism_scorer = AIPlagiarismScorer()
+        self.multi_judge_ai_review_scorer = MultiJudgeAIReviewScorer()
+        self.explainability_scorer = ExplainabilityScorer()
 
     async def calculate_scores(
         self,
@@ -170,19 +234,42 @@ class AuditScorer:
         scores = []
 
         for category in self.AUDIT_CATEGORIES:
-            score_value, explanation = await self._calculate_category_score(
+            score_value, explanation, sub_scores = await self._calculate_category_score(
                 category, response, judge_platform_id, all_responses
             )
 
-            scores.append(
-                AuditScore(
-                    name=category,
-                    value=score_value,
-                    maxValue=10,
-                    category=self.CATEGORY_MAP.get(category, "General"),
-                    explanation=explanation,
-                )
+            # Include sub-scores for categories with detailed scoring
+            has_sub_scores = category in [
+                "Hallucination Score",
+                "Factual Accuracy Score",
+                "Multi-LLM Consensus Score",
+                "Deviation Map",
+                "Source Authenticity Checker",
+                "Compliance Score",
+                "Bias & Fairness Score",
+                "Safety Score",
+                "Context-Adherence Score",
+                "Stability & Robustness Test",
+                "Prompt Sensitivity Test",
+                "AI Safety Guardrail Test",
+                "Agent Action Safety Audit",
+                "Code Vulnerability Auditor",
+                "Data Extraction Accuracy Audit",
+                "Brand Consistency Audit",
+                "AI Output Plagiarism Checker",
+                "Multi-judge AI Review",
+                "Explainability Score"
+            ]
+            score = AuditScore(
+                name=category,
+                value=score_value,
+                maxValue=10,
+                category=self.CATEGORY_MAP.get(category, "General"),
+                explanation=explanation,
+                subScores=sub_scores if has_sub_scores else None,
             )
+            
+            scores.append(score)
 
         overall_score = round(sum(s.value for s in scores) / len(scores))
 
@@ -199,12 +286,128 @@ class AuditScorer:
         response: str,
         judge_platform_id: str,
         all_responses: dict[str, str],
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, Optional[Union[
+        HallucinationSubScore,
+        AccuracySubScore,
+        MultiLLMConsensusSubScore,
+        DeviationMapSubScore,
+        SourceAuthenticitySubScore,
+        ComplianceSubScore,
+        BiasFairnessSubScore,
+        SafetySubScore,
+        ContextAdherenceSubScore,
+        StabilityRobustnessSubScore,
+        PromptSensitivitySubScore,
+        AISafetyGuardrailSubScore
+    ]]]:
         """Calculate score and explanation for a specific category using judge platform.
         
         Returns:
-            tuple[int, str]: (score, explanation) where score is 0-10 and explanation is a detailed reason
+            tuple[int, str, Optional[SubScore]]: (score, explanation, sub_scores) where score is 0-10, 
+            explanation is a detailed reason, and sub_scores is populated for categories with detailed scoring
         """
+        sub_scores = None
+        
+        # Calculate sub-scores for categories with detailed scoring
+        # Uses rule-based methods by default (fast, deterministic)
+        # Set use_llm=True and use_embeddings=True for enhanced accuracy (slower, more expensive)
+        if category == "Hallucination Score":
+            sub_scores = await self.hallucination_scorer.calculate_sub_scores(
+                response, judge_platform_id, all_responses,
+                use_llm=False,  # Set to True for LLM-enhanced scoring
+                use_embeddings=False  # Set to True for semantic similarity comparison
+            )
+        elif category == "Factual Accuracy Score":
+            sub_scores = await self.accuracy_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Multi-LLM Consensus Score":
+            sub_scores = await self.multi_llm_consensus_scorer.calculate_sub_scores(
+                response, all_responses,
+                use_embeddings=True  # Set to False for word-based comparison only
+            )
+        elif category == "Deviation Map":
+            sub_scores = await self.deviation_map_scorer.calculate_sub_scores(
+                response, all_responses,
+                use_embeddings=True  # Set to False for word-based comparison only
+            )
+        elif category == "Source Authenticity Checker":
+            sub_scores = await self.source_authenticity_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Compliance Score":
+            sub_scores = await self.compliance_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Bias & Fairness Score":
+            sub_scores = await self.bias_fairness_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Safety Score":
+            sub_scores = await self.safety_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Context-Adherence Score":
+            # Note: Context adherence may need prompt parameter
+            sub_scores = await self.context_adherence_scorer.calculate_sub_scores(
+                response, prompt="", judge_platform_id=judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Stability & Robustness Test":
+            sub_scores = await self.stability_robustness_scorer.calculate_sub_scores(
+                response, all_responses,
+                use_embeddings=True  # Set to False for word-based comparison only
+            )
+        elif category == "Prompt Sensitivity Test":
+            sub_scores = await self.prompt_sensitivity_scorer.calculate_sub_scores(
+                response, all_responses,
+                use_embeddings=True  # Set to False for word-based comparison only
+            )
+        elif category == "AI Safety Guardrail Test":
+            sub_scores = await self.ai_safety_guardrail_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Agent Action Safety Audit":
+            sub_scores = await self.agent_action_safety_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Code Vulnerability Auditor":
+            sub_scores = await self.code_vulnerability_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Data Extraction Accuracy Audit":
+            sub_scores = await self.data_extraction_accuracy_scorer.calculate_sub_scores(
+                response, ground_truth="", judge_platform_id=judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Brand Consistency Audit":
+            sub_scores = await self.brand_consistency_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "AI Output Plagiarism Checker":
+            sub_scores = await self.ai_plagiarism_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Multi-judge AI Review":
+            sub_scores = await self.multi_judge_ai_review_scorer.calculate_sub_scores(
+                response, all_responses, judge_platform_id=judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
+        elif category == "Explainability Score":
+            sub_scores = await self.explainability_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                use_llm=False  # Set to True for LLM-enhanced scoring
+            )
         # Create evaluation prompt that requests both score and explanation
         evaluation_prompt = f"""Evaluate the following AI response on the metric: {category}
 
@@ -238,8 +441,6 @@ Return ONLY valid JSON, no additional text."""
             )
 
             # Try to parse JSON response
-            import json
-            import re
             
             # Try multiple strategies to extract JSON
             # Strategy 1: Look for JSON object with score and explanation fields
@@ -258,7 +459,7 @@ Return ONLY valid JSON, no additional text."""
                         explanation = str(result.get("explanation", ""))
                         score = max(0, min(10, score))
                         if explanation:
-                            return (score, explanation)
+                            return (score, explanation, sub_scores)
                     except (json.JSONDecodeError, ValueError, KeyError):
                         continue
             
@@ -271,7 +472,7 @@ Return ONLY valid JSON, no additional text."""
                     explanation = str(result.get("explanation", ""))
                     score = max(0, min(10, score))
                     if explanation:
-                        return (score, explanation)
+                        return (score, explanation, sub_scores)
                 except (json.JSONDecodeError, ValueError, KeyError):
                     pass
             
@@ -282,7 +483,7 @@ Return ONLY valid JSON, no additional text."""
                 explanation = str(result.get("explanation", ""))
                 score = max(0, min(10, score))
                 if explanation:
-                    return (score, explanation)
+                    return (score, explanation, sub_scores)
             except (json.JSONDecodeError, ValueError, KeyError):
                 pass
             
@@ -295,13 +496,15 @@ Return ONLY valid JSON, no additional text."""
                     if 0 <= score <= 10:
                         # Use the judge response as explanation if JSON parsing failed
                         explanation = judge_response.strip()[:500]  # Limit explanation length
-                        return (score, explanation)
+                        return (score, explanation, sub_scores)
         except Exception as e:
             # If AI call fails, fall back to rule-based scoring
             pass
 
         # Fallback: use rule-based scoring with explanation
-        return self._rule_based_score_with_explanation(category, response, all_responses)
+        score, explanation = self._rule_based_score_with_explanation(category, response, all_responses)
+        return (score, explanation, sub_scores)
+
 
     def _rule_based_score_with_explanation(
         self, category: str, response: str, all_responses: dict[str, str]

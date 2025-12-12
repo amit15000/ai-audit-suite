@@ -24,7 +24,8 @@ dependencies = [
   "pgvector>=0.2.5",
   "tenacity>=8.3.0",
   "orjson>=3.10.3",
-  "python-dotenv>=1.0.1"
+    "python-dotenv>=1.0.1",
+    "supabase>=2.0.0"
 ]
 
 [project.optional-dependencies]
