@@ -49,7 +49,7 @@ class AIPlatformService:
         platform_id: str,
         prompt: str,
         system_prompt: str | None = None,
-        on_chunk: Optional[Callable[[str, str], None]] = None,
+        on_chunk: Optional[Callable[[str, str], Any]] = None,
     ) -> AsyncIterator[str]:
         """Get response from specified AI platform with streaming.
         
@@ -57,10 +57,10 @@ class AIPlatformService:
             platform_id: Frontend platform ID (e.g., "openai", "gemini")
             prompt: The prompt to send
             system_prompt: Optional system prompt
-            on_chunk: Optional callback function(chunk, accumulated_text) called for each chunk
+            on_chunk: Optional async callback function(chunk, accumulated_text) called for each chunk
             
         Yields:
-            Response text chunks as they arrive
+            Response text chunks as they arrive (word-by-word when possible)
             
         Raises:
             ValueError: If platform is not supported or adapter not found
@@ -80,34 +80,48 @@ class AIPlatformService:
         # Check if adapter supports streaming
         if hasattr(adapter, 'invoke_streaming'):
             accumulated_text = ""
+            # Adapters like OpenAI/Gemini/Groq already stream fine-grained chunks
+            # (token-by-token or word-by-word), so we pass them through directly
             async for chunk in adapter.invoke_streaming(invocation):
                 accumulated_text += chunk
+                # Call on_chunk callback for each chunk (awaits if it's async)
                 if on_chunk:
-                    on_chunk(chunk, accumulated_text)
+                    import inspect
+                    if inspect.iscoroutinefunction(on_chunk):
+                        await on_chunk(chunk, accumulated_text)
+                    else:
+                        on_chunk(chunk, accumulated_text)
                 yield chunk
         else:
-            # Fallback: get full response and simulate chunking
+            # Fallback: get full response and simulate word-by-word streaming
             response: AdapterResponse = await adapter.run_async(invocation)
             
             if response.error:
                 raise ValueError(f"Platform '{platform_id}' error: {response.error}")
             
-            # Simulate chunking by splitting into words and yielding progressively
-            words = response.text.split()
+            # Simulate word-by-word streaming for better UX
+            import asyncio
+            import re
+            
+            # Split text into words while preserving spaces
+            words = re.findall(r'\S+\s*', response.text)
             accumulated_text = ""
             
-            # Yield in chunks of ~10 words at a time for better UX
-            chunk_size = 10
-            for i in range(0, len(words), chunk_size):
-                chunk_words = words[i:i + chunk_size]
-                chunk = " ".join(chunk_words) + (" " if i + chunk_size < len(words) else "")
+            # Yield word-by-word with small delay for realistic streaming effect
+            for word in words:
+                chunk = word
                 accumulated_text += chunk
                 
+                # Call on_chunk callback (awaits if it's async)
                 if on_chunk:
-                    on_chunk(chunk, accumulated_text)
+                    import inspect
+                    if inspect.iscoroutinefunction(on_chunk):
+                        await on_chunk(chunk, accumulated_text)
+                    else:
+                        on_chunk(chunk, accumulated_text)
+                
                 yield chunk
                 
-                # Small delay to simulate streaming
-                import asyncio
-                await asyncio.sleep(0.05)  # 50ms delay between chunks
+                # Small delay between words to simulate streaming (20ms = smooth but fast)
+                await asyncio.sleep(0.02)
 

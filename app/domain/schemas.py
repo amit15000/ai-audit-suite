@@ -485,12 +485,16 @@ class ProcessSimilarityRequest(BaseModel):
 
 # Streaming Event Types
 StreamingEventType = Literal[
+    "stream_connected",
     "processing_started",
     "response_started",
     "response_chunk",
     "response_complete",
     "similarity_analysis_started",
     "similarity_analysis_complete",
+    "audit_scores_started",
+    "audit_score",
+    "audit_scores_complete",
     "judge_started",
     "judge_chunk",
     "judge_parameter",

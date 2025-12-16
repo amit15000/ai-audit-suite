@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
+
+if TYPE_CHECKING:
+    from app.services.comparison.event_manager import ComparisonEventManager
 
 from app.domain.schemas import (
     AccuracySubScore,
@@ -229,11 +232,22 @@ class AuditScorer:
         response: str,
         judge_platform_id: str,
         all_responses: dict[str, str],
+        event_manager: Optional["ComparisonEventManager"] = None,
     ) -> AuditorDetailedScores:
-        """Calculate all audit scores for a platform."""
+        """Calculate all audit scores for a platform.
+        
+        Args:
+            platform_id: Platform identifier
+            platform_name: Platform display name
+            response: Response text to score
+            judge_platform_id: Judge platform ID
+            all_responses: All platform responses for comparison
+            event_manager: Optional event manager for streaming score updates
+        """
         scores = []
+        total_categories = len(self.AUDIT_CATEGORIES)
 
-        for category in self.AUDIT_CATEGORIES:
+        for idx, category in enumerate(self.AUDIT_CATEGORIES):
             score_value, explanation, sub_scores = await self._calculate_category_score(
                 category, response, judge_platform_id, all_responses
             )
@@ -270,8 +284,40 @@ class AuditScorer:
             )
             
             scores.append(score)
+            
+            # Emit streaming event for each calculated score
+            if event_manager:
+                import asyncio
+                asyncio.create_task(event_manager.emit_event(
+                    "audit_score",
+                    platform_id=platform_id,
+                    data={
+                        "score_name": category,
+                        "score_value": score_value,
+                        "max_value": 10,
+                        "category": self.CATEGORY_MAP.get(category, "General"),
+                        "explanation": explanation,
+                        "sub_scores": sub_scores.model_dump() if sub_scores else None,
+                        "accumulated_scores": [s.model_dump() for s in scores],
+                        "progress": int((idx + 1) / total_categories * 100),  # 0-100% for audit scoring
+                        "completed_count": idx + 1,
+                        "total_count": total_categories,
+                    },
+                ))
 
         overall_score = round(sum(s.value for s in scores) / len(scores))
+
+        # Emit completion event
+        if event_manager:
+            await event_manager.emit_event(
+                "audit_scores_complete",
+                platform_id=platform_id,
+                data={
+                    "overall_score": overall_score,
+                    "total_scores": len(scores),
+                    "scores": [s.model_dump() for s in scores],
+                },
+            )
 
         return AuditorDetailedScores(
             auditorId=platform_id,

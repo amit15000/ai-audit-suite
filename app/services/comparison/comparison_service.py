@@ -116,24 +116,24 @@ async def process_comparison(
                         "platform_name": get_platform_name(platform_id),
                     })
                 
-                # Use streaming to get response
+                # Use streaming to get response with proper event emission
                 accumulated_text = ""
                 async def on_chunk(chunk: str, accumulated: str) -> None:
+                    """Async callback for each chunk - emits events immediately."""
                     nonlocal accumulated_text
                     accumulated_text = accumulated
                     if event_manager:
-                        # Emit chunk event
-                        import asyncio
-                        asyncio.create_task(event_manager.emit_event(
+                        # Emit chunk event immediately (awaited)
+                        await event_manager.emit_event(
                             "response_chunk",
                             platform_id=platform_id,
                             data={
                                 "chunk": chunk,
                                 "accumulated_text": accumulated,
                             },
-                        ))
+                        )
                 
-                # Stream response
+                # Stream response word-by-word
                 full_response = ""
                 async for chunk in ai_service.get_response_streaming(
                     platform_id,
@@ -245,13 +245,21 @@ async def process_comparison(
             judge_platform_id = str(comparison.judge_platform)  # type: ignore[arg-type]
             prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
             
-            # Calculate detailed audit scores
+            # Emit audit scores started event
+            if event_manager:
+                await event_manager.emit_event("audit_scores_started", platform_id=platform_id, data={
+                    "platform_name": platform_name,
+                    "total_categories": len(scorer.AUDIT_CATEGORIES),
+                })
+            
+            # Calculate detailed audit scores with streaming
             detailed_scores = await scorer.calculate_scores(
                 platform_id,
                 platform_name,
                 responses[platform_id],
                 judge_platform_id,
                 responses,
+                event_manager=event_manager,
             )
 
             top_reasons = await scorer.generate_top_reasons(

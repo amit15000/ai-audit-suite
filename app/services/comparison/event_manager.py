@@ -25,7 +25,11 @@ class ComparisonEventManager:
         platform_id: Optional[str] = None,
         data: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Emit an event to the stream."""
+        """Emit an event to the stream immediately.
+        
+        Since we use an unbounded queue, put() will never block.
+        Events are emitted immediately and processed by stream_events().
+        """
         if self._closed:
             return
         
@@ -37,6 +41,7 @@ class ComparisonEventManager:
         }
         
         try:
+            # Put event in queue (unbounded queue, so this never blocks)
             await self._event_queue.put(event)
         except Exception as e:
             logger.warning(
@@ -47,17 +52,21 @@ class ComparisonEventManager:
             )
     
     async def stream_events(self) -> AsyncIterator[str]:
-        """Stream events as SSE format."""
+        """Stream events as SSE format with immediate delivery."""
         import json
         
         try:
             while not self._closed:
                 try:
-                    # Wait for event with timeout to allow checking closed status
-                    event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
-                    yield f"data: {json.dumps(event)}\n\n"
+                    # Get event with a short timeout to allow checking closed status
+                    # Use shorter timeout (0.1s) for more responsive streaming
+                    event = await asyncio.wait_for(self._event_queue.get(), timeout=0.1)
+                    
+                    # Format as SSE and yield immediately
+                    event_str = f"data: {json.dumps(event)}\n\n"
+                    yield event_str
                 except asyncio.TimeoutError:
-                    # Check if closed while waiting
+                    # Timeout is expected - check if closed while waiting
                     if self._closed:
                         break
                     continue
@@ -66,6 +75,7 @@ class ComparisonEventManager:
                         "event_manager.stream_error",
                         comparison_id=self.comparison_id,
                         error=str(e),
+                        exc_info=True,
                     )
                     # Emit error event
                     error_event = {

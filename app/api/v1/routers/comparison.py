@@ -260,8 +260,10 @@ async def get_status(
 
 @router.get(
     "/{comparison_id}/stream",
+    status_code=status.HTTP_200_OK,
     summary="Stream comparison progress",
     description="Stream real-time updates for comparison processing using Server-Sent Events (SSE)",
+    response_class=StreamingResponse,
 )
 async def stream_comparison(
     comparison_id: str,
@@ -269,18 +271,48 @@ async def stream_comparison(
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """Stream real-time comparison processing events."""
+    logger.info(
+        "comparison.stream.request",
+        comparison_id=comparison_id,
+        user_id=current_user.id,
+    )
     try:
         # Verify comparison exists and user has access
-        comparison = db.query(Comparison).filter(Comparison.id == comparison_id).first()
+        # Retry a few times in case of race condition (comparison just created)
+        import asyncio
+        comparison = None
+        max_retries = 3
+        retry_delay = 0.5  # seconds
+        
+        for attempt in range(max_retries):
+            comparison = db.query(Comparison).filter(Comparison.id == comparison_id).first()
+            if comparison:
+                break
+            
+            if attempt < max_retries - 1:
+                logger.info(
+                    "comparison.stream.retry",
+                    comparison_id=comparison_id,
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                )
+                await asyncio.sleep(retry_delay)
+                # Refresh the session to get latest data
+                db.expire_all()
         
         if not comparison:
+            logger.warning(
+                "comparison.stream.not_found",
+                comparison_id=comparison_id,
+                user_id=current_user.id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
                     "success": False,
                     "error": {
                         "code": "COMPARISON_NOT_FOUND",
-                        "message": f"Comparison with ID {comparison_id} not found",
+                        "message": f"Comparison with ID {comparison_id} was not found. Please verify the comparison exists and try again.",
                     },
                 },
             )
