@@ -36,6 +36,18 @@ class BaseAdapter(ABC):
     async def invoke_async(self, invocation: AdapterInvocation) -> AdapterResponse:
         """Async method to invoke the adapter."""
         ...
+    
+    async def invoke_streaming(self, invocation: AdapterInvocation):
+        """Optional streaming method - override in adapters that support it.
+        
+        Default implementation falls back to invoke_async and simulates streaming.
+        """
+        response = await self.invoke_async(invocation)
+        if response.error:
+            raise AdapterError(response.error)
+        
+        # Simulate streaming by yielding the full text
+        yield response.text
 
     # Legacy sync support (for backward compatibility)
     @retry(

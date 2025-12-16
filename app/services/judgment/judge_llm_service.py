@@ -9,6 +9,7 @@ from typing import Any
 import structlog
 
 from app.domain.schemas import JudgmentScores
+from app.services.comparison.event_manager import ComparisonEventManager
 from app.services.llm.ai_platform_service import AIPlatformService
 
 logger = structlog.get_logger(__name__)
@@ -282,6 +283,177 @@ class JudgeLLMService:
             fallback_applied=fallback_applied,
             weights_used=self.weights.copy(),
         )
+    
+    async def evaluate_streaming(
+        self,
+        response_text: str,
+        judge_platform_id: str,
+        user_query: str | None = None,
+        event_manager: ComparisonEventManager | None = None,
+        platform_id: str | None = None,
+        retry_on_failure: bool = True,
+    ) -> JudgeLLMResult:
+        """Evaluate a response using the Judge LLM with streaming and incremental parameter emission.
+        
+        Args:
+            response_text: The AI response text to evaluate
+            judge_platform_id: Platform ID to use as judge
+            user_query: Optional original user query for context
+            event_manager: Optional event manager for streaming events
+            platform_id: Platform ID being evaluated (for events)
+            retry_on_failure: Whether to retry once if JSON parsing fails
+            
+        Returns:
+            JudgeLLMResult with scores, trust score, and metadata
+        """
+        # Build evaluation prompt
+        truncated_response = response_text[:3000] if len(response_text) > 3000 else response_text
+        if len(response_text) > 3000:
+            truncated_response += "\n\n[Response truncated for evaluation...]"
+        evaluation_prompt = JUDGE_RUBRIC_PROMPT.format(response=truncated_response)
+        
+        if user_query:
+            evaluation_prompt = f"Original query: {user_query}\n\n{evaluation_prompt}"
+        
+        raw_response = ""
+        fallback_applied = False
+        accumulated_scores: dict[str, int] = {}
+        
+        try:
+            # Stream judge response
+            async def on_chunk(chunk: str, accumulated: str) -> None:
+                nonlocal raw_response, accumulated_scores
+                raw_response = accumulated
+                
+                # Try to parse JSON incrementally
+                parsed_scores = self._parse_json_response_incremental(accumulated)
+                if parsed_scores:
+                    # Emit events for newly discovered parameters
+                    for param_name, value in parsed_scores.items():
+                        if param_name not in accumulated_scores:
+                            accumulated_scores[param_name] = value
+                            if event_manager and platform_id:
+                                import asyncio
+                                asyncio.create_task(event_manager.emit_event(
+                                    "judge_parameter",
+                                    platform_id=platform_id,
+                                    data={
+                                        "parameter_name": param_name,
+                                        "value": value,
+                                        "accumulated_scores": accumulated_scores.copy(),
+                                    },
+                                ))
+                
+                # Also emit raw chunks
+                if event_manager and platform_id:
+                    import asyncio
+                    asyncio.create_task(event_manager.emit_event(
+                        "judge_chunk",
+                        platform_id=platform_id,
+                        data={
+                            "chunk": chunk,
+                            "accumulated_text": accumulated,
+                        },
+                    ))
+            
+            # Stream response
+            async for chunk in self.ai_service.get_response_streaming(
+                judge_platform_id,
+                evaluation_prompt,
+                system_prompt=JUDGE_SYSTEM_PROMPT,
+                on_chunk=on_chunk,
+            ):
+                raw_response += chunk
+            
+            # Final parse attempt
+            scores = self._parse_json_response(raw_response)
+            
+            if scores is None and retry_on_failure:
+                # Retry once
+                logger.warning(
+                    "judge_llm.parse_failed_retrying",
+                    judge_platform=judge_platform_id,
+                )
+                raw_response = ""
+                async for chunk in self.ai_service.get_response_streaming(
+                    judge_platform_id,
+                    evaluation_prompt,
+                    system_prompt=JUDGE_SYSTEM_PROMPT,
+                    on_chunk=on_chunk,
+                ):
+                    raw_response += chunk
+                scores = self._parse_json_response(raw_response)
+            
+            if scores is None:
+                fallback_applied = True
+                scores = JudgmentScores(
+                    accuracy=5,
+                    completeness=5,
+                    clarity=5,
+                    reasoning=5,
+                    safety=5,
+                    hallucination_risk=5,
+                )
+                logger.warning(
+                    "judge_llm.fallback_applied",
+                    judge_platform=judge_platform_id,
+                    raw_response_length=len(raw_response),
+                )
+        except Exception as e:
+            fallback_applied = True
+            scores = JudgmentScores(
+                accuracy=5,
+                completeness=5,
+                clarity=5,
+                reasoning=5,
+                safety=5,
+                hallucination_risk=5,
+            )
+            logger.error(
+                "judge_llm.evaluation_failed",
+                judge_platform=judge_platform_id,
+                error=str(e),
+                exc_info=True,
+            )
+        
+        # Calculate weighted trust score
+        trust_score = self._calculate_trust_score(scores)
+        
+        return JudgeLLMResult(
+            scores=scores,
+            trust_score=trust_score,
+            raw_response=raw_response,
+            fallback_applied=fallback_applied,
+            weights_used=self.weights.copy(),
+        )
+    
+    def _parse_json_response_incremental(self, response_text: str) -> dict[str, int] | None:
+        """Try to parse JSON incrementally as it arrives.
+        
+        Returns partial scores dictionary if any parameters can be extracted.
+        """
+        if not response_text or not response_text.strip():
+            return None
+        
+        import json
+        import re
+        
+        # Try to extract individual key-value pairs from partial JSON
+        scores: dict[str, int] = {}
+        
+        # Pattern to match "key": value (where value is a number)
+        pattern = r'"(\w+)":\s*(\d+)'
+        matches = re.findall(pattern, response_text)
+        
+        for key, value_str in matches:
+            try:
+                value = int(value_str)
+                if key in ["accuracy", "completeness", "clarity", "reasoning", "safety", "hallucination_risk"]:
+                    scores[key] = max(0, min(10, value))  # Clamp to 0-10
+            except ValueError:
+                continue
+        
+        return scores if scores else None
     
     def _parse_json_response(self, response_text: str) -> JudgmentScores | None:
         """Parse JSON response from judge LLM.

@@ -16,9 +16,37 @@ from app.domain.schemas import (
 )
 from app.services.llm.ai_platform_service import AIPlatformService
 from app.services.comparison.audit_scorer import AuditScorer
+from app.services.comparison.event_manager import ComparisonEventManager
 from app.services.embedding.similarity_processor import SimilarityProcessor
 from app.services.judgment.judge_llm_service import JudgeLLMService
 from app.utils.platform_mapping import get_platform_name
+
+
+def _update_partial_results(
+    db: Session,
+    comparison: Comparison,
+    partial_data: dict[str, Any],
+) -> None:
+    """Update partial results in database.
+    
+    Args:
+        db: Database session
+        comparison: Comparison record
+        partial_data: Dictionary with partial results to merge
+    """
+    try:
+        current_results = comparison.results if isinstance(comparison.results, dict) else {}
+        updated_results = {**current_results, **partial_data}
+        comparison.results = updated_results  # type: ignore[assignment]
+        db.commit()
+    except Exception as e:
+        import structlog
+        logger = structlog.get_logger(__name__)
+        logger.warning(
+            "comparison.partial_results_update_failed",
+            comparison_id=str(comparison.id),
+            error=str(e),
+        )
 
 
 def create_comparison(
@@ -43,13 +71,30 @@ def create_comparison(
     return comparison
 
 
-async def process_comparison(db: Session, comparison: Comparison) -> None:
-    """Process comparison: get responses and calculate scores."""
+async def process_comparison(
+    db: Session,
+    comparison: Comparison,
+    event_manager: ComparisonEventManager | None = None,
+) -> None:
+    """Process comparison: get responses and calculate scores.
+    
+    Args:
+        db: Database session
+        comparison: Comparison record to process
+        event_manager: Optional event manager for streaming events
+    """
     try:
         # Access model attributes directly - they're Python values at runtime
         comparison.status = ComparisonStatus.PROCESSING.value  # type: ignore[assignment]
         comparison.progress = 0  # type: ignore[assignment]
         db.commit()
+
+        # Emit processing started event
+        if event_manager:
+            await event_manager.emit_event("processing_started", data={
+                "comparison_id": str(comparison.id),
+                "platforms": comparison.selected_platforms if isinstance(comparison.selected_platforms, list) else [],
+            })
 
         ai_service = AIPlatformService()
         scorer = AuditScorer()
@@ -64,13 +109,79 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
         for idx, platform_id in enumerate(selected_platforms_list):
             try:
                 prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
-                response = await ai_service.get_response(platform_id, prompt_text)
-                responses[platform_id] = response
+                
+                # Emit response started event
+                if event_manager:
+                    await event_manager.emit_event("response_started", platform_id=platform_id, data={
+                        "platform_name": get_platform_name(platform_id),
+                    })
+                
+                # Use streaming to get response
+                accumulated_text = ""
+                async def on_chunk(chunk: str, accumulated: str) -> None:
+                    nonlocal accumulated_text
+                    accumulated_text = accumulated
+                    if event_manager:
+                        # Emit chunk event
+                        import asyncio
+                        asyncio.create_task(event_manager.emit_event(
+                            "response_chunk",
+                            platform_id=platform_id,
+                            data={
+                                "chunk": chunk,
+                                "accumulated_text": accumulated,
+                            },
+                        ))
+                
+                # Stream response
+                full_response = ""
+                async for chunk in ai_service.get_response_streaming(
+                    platform_id,
+                    prompt_text,
+                    on_chunk=on_chunk,
+                ):
+                    full_response += chunk
+                
+                responses[platform_id] = full_response
+                
+                # Update partial results in database
+                _update_partial_results(db, comparison, {
+                    "partial_responses": {
+                        platform_id: {
+                            "response": full_response,
+                            "platform_name": get_platform_name(platform_id),
+                        }
+                    }
+                })
+                
+                # Emit response complete event
+                if event_manager:
+                    await event_manager.emit_event("response_complete", platform_id=platform_id, data={
+                        "response": full_response,
+                        "platform_name": get_platform_name(platform_id),
+                    })
+                
             except Exception as e:
                 # Store error but continue with other platforms
-                responses[platform_id] = f"Error: {str(e)}"
+                error_msg = f"Error: {str(e)}"
+                responses[platform_id] = error_msg
+                
+                # Emit error event
+                if event_manager:
+                    await event_manager.emit_event("error", platform_id=platform_id, data={
+                        "error": str(e),
+                        "stage": "response_generation",
+                    })
             
             comparison.progress = int((idx + 1) / total_platforms * 40)  # 40% for responses  # type: ignore[assignment]
+            
+            # Emit progress event
+            if event_manager:
+                await event_manager.emit_event("progress", data={
+                    "progress": comparison.progress,
+                    "stage": "response_generation",
+                })
+            
             db.commit()
 
         # Process similarity analysis (embedding & similarity)
@@ -82,6 +193,11 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
         }
         
         if len(valid_responses) >= 2:  # Need at least 2 responses for similarity
+            if event_manager:
+                await event_manager.emit_event("similarity_analysis_started", data={
+                    "valid_responses_count": len(valid_responses),
+                })
+            
             try:
                 similarity_processor = SimilarityProcessor()
                 comparison_id_str = str(comparison.id)  # type: ignore[arg-type]
@@ -91,6 +207,13 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                     persist=True,
                 )
                 comparison.progress = 50  # type: ignore[assignment]
+                
+                if event_manager:
+                    await event_manager.emit_event("similarity_analysis_complete", data={
+                        "consensus_scores": similarity_analysis.get("consensus_scores", {}),
+                        "outliers": similarity_analysis.get("outliers", []),
+                    })
+                
                 db.commit()
             except Exception as e:
                 # Log error but don't fail the comparison
@@ -102,6 +225,13 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                     error=str(e),
                 )
                 comparison.progress = 50  # type: ignore[assignment]
+                
+                if event_manager:
+                    await event_manager.emit_event("error", data={
+                        "error": str(e),
+                        "stage": "similarity_analysis",
+                    })
+                
                 db.commit()
 
         # Calculate scores for each platform
@@ -134,17 +264,45 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
             # Evaluate with Judge LLM (fixed JSON rubric evaluation)
             judge_evaluation = None
             try:
-                judge_result = await judge_service.evaluate(
+                if event_manager:
+                    await event_manager.emit_event("judge_started", platform_id=platform_id, data={
+                        "judge_platform": judge_platform_id,
+                    })
+                
+                # Use streaming judge evaluation
+                judge_result = await judge_service.evaluate_streaming(
                     response_text=responses[platform_id],
                     judge_platform_id=judge_platform_id,
                     user_query=prompt_text,
+                    event_manager=event_manager,
+                    platform_id=platform_id,
                 )
+                
                 judge_evaluation = JudgeEvaluation(
                     scores=judge_result.scores,
                     trustScore=judge_result.trust_score,
                     fallbackApplied=judge_result.fallback_applied,
                     weights=judge_result.weights_used,
                 )
+                
+                # Update partial results with judge evaluation
+                current_partial = comparison.results if isinstance(comparison.results, dict) else {}
+                partial_judge = current_partial.get("partial_judge_evaluations", {})
+                partial_judge[platform_id] = {
+                    "scores": judge_result.scores.model_dump(),
+                    "trust_score": judge_result.trust_score,
+                    "fallback_applied": judge_result.fallback_applied,
+                }
+                _update_partial_results(db, comparison, {
+                    "partial_judge_evaluations": partial_judge,
+                })
+                
+                if event_manager:
+                    await event_manager.emit_event("judge_complete", platform_id=platform_id, data={
+                        "scores": judge_result.scores.model_dump(),
+                        "trust_score": judge_result.trust_score,
+                        "fallback_applied": judge_result.fallback_applied,
+                    })
             except Exception as e:
                 # Log error but don't fail the comparison
                 import structlog
@@ -154,6 +312,12 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
                     platform_id=platform_id,
                     error=str(e),
                 )
+                
+                if event_manager:
+                    await event_manager.emit_event("error", platform_id=platform_id, data={
+                        "error": str(e),
+                        "stage": "judge_evaluation",
+                    })
 
             # Calculate overall score (60-100 range)
             # Prefer judge trust score if available and valid, otherwise use detailed scores average
@@ -177,6 +341,13 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
             )
 
             comparison.progress = 50 + int((idx + 1) / total_platforms * 50)  # 50-100% for scoring  # type: ignore[assignment]
+            
+            if event_manager:
+                await event_manager.emit_event("progress", data={
+                    "progress": comparison.progress,
+                    "stage": "scoring",
+                })
+            
             db.commit()
 
         # Sort by score
@@ -219,11 +390,27 @@ async def process_comparison(db: Session, comparison: Comparison) -> None:
         comparison.progress = 100  # type: ignore[assignment]
         comparison.completed_at = datetime.utcnow()  # type: ignore[assignment]
         db.commit()
+        
+        # Emit completion event
+        if event_manager:
+            await event_manager.emit_event("comparison_complete", data={
+                "results": results,
+            })
+            event_manager.close()
 
     except Exception as e:
         comparison.status = ComparisonStatus.FAILED.value  # type: ignore[assignment]
         comparison.error_message = str(e)  # type: ignore[assignment]
         db.commit()
+        
+        # Emit error event
+        if event_manager:
+            await event_manager.emit_event("error", data={
+                "error": str(e),
+                "stage": "processing",
+            })
+            event_manager.close()
+        
         raise
 
 

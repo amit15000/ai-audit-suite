@@ -92,6 +92,40 @@ class OpenAIAdapter(BaseAdapter):
                 raw={"error": str(e)},
                 error=str(e),
             )
+    
+    async def invoke_streaming(self, invocation: AdapterInvocation):
+        """Invoke OpenAI API with streaming."""
+        import asyncio
+        
+        client = self._get_client()
+        
+        messages = []
+        if invocation.system_prompt:
+            messages.append({"role": "system", "content": invocation.system_prompt})
+        messages.append({"role": "user", "content": invocation.instructions})
+        
+        try:
+            # Use streaming API
+            stream = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    stream=True,
+                    timeout=self._timeout,
+                )
+            )
+            
+            for chunk in stream:
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        yield delta.content
+        except Exception as e:
+            # On error, fall back to non-streaming
+            response = await self.invoke_async(invocation)
+            if response.error:
+                raise ValueError(response.error)
+            yield response.text
 
 
 # Register the adapter

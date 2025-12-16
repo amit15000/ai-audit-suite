@@ -479,3 +479,79 @@ class ProcessSimilarityRequest(BaseModel):
 
     request_id: str = Field(..., description="Request ID to process (must have existing LLM responses)")
     persist: bool = Field(default=True, description="Whether to persist results to database")
+
+
+# Streaming Event Schemas for SSE
+
+# Streaming Event Types
+StreamingEventType = Literal[
+    "processing_started",
+    "response_started",
+    "response_chunk",
+    "response_complete",
+    "similarity_analysis_started",
+    "similarity_analysis_complete",
+    "judge_started",
+    "judge_chunk",
+    "judge_parameter",
+    "judge_complete",
+    "progress",
+    "comparison_complete",
+    "error",
+]
+
+
+class StreamingEvent(BaseModel):
+    """Base schema for streaming events."""
+    
+    type: str = Field(..., description="Event type")
+    platform_id: Optional[str] = Field(None, description="Platform ID (if applicable)")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
+    data: Dict[str, Any] = Field(..., description="Event-specific data")
+    
+    def to_sse_format(self) -> str:
+        """Convert event to Server-Sent Events format."""
+        import json
+        event_data = {
+            "type": self.type,
+            "platform_id": self.platform_id,
+            "timestamp": self.timestamp.isoformat(),
+            "data": self.data,
+        }
+        return f"data: {json.dumps(event_data)}\n\n"
+
+
+class ResponseChunkEvent(BaseModel):
+    """Event for response text chunks."""
+    
+    platform_id: str
+    chunk: str
+    accumulated_text: str = Field(..., description="Full text accumulated so far")
+    is_complete: bool = False
+
+
+class ResponseCompleteEvent(BaseModel):
+    """Event when a platform response is complete."""
+    
+    platform_id: str
+    response: str
+    tokens: Optional[int] = None
+    latency_ms: Optional[int] = None
+
+
+class JudgeParameterEvent(BaseModel):
+    """Event for individual judge parameter."""
+    
+    platform_id: str
+    parameter_name: str
+    value: Union[int, float]
+    accumulated_scores: Dict[str, Union[int, float]] = Field(..., description="All scores calculated so far")
+
+
+class JudgeCompleteEvent(BaseModel):
+    """Event when judge evaluation is complete."""
+    
+    platform_id: str
+    scores: JudgmentScores
+    trust_score: float
+    fallback_applied: bool

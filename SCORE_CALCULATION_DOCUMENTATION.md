@@ -22,26 +22,74 @@ The Hallucination Score consists of 4 sub-scores that detect different types of 
 
 ### 1.1 Fact Checking Score (0-10)
 
-**Purpose**: Checks facts against external sources via citation verification.
+**Purpose**: Checks facts against external sources via comprehensive citation verification and claim-source alignment.
 
 **Calculation Method**:
-1. **Citation Verification**: Extracts all citations from the response and verifies their accessibility
-2. **Base Score Calculation**:
-   - No citations found → 6.0 (neutral)
-   - Accessibility rate ≥ 90% → 9.0
-   - Accessibility rate ≥ 70% → 8.0
-   - Accessibility rate ≥ 50% → 6.0
-   - Accessibility rate ≥ 30% → 4.0
-   - Accessibility rate < 30% → 2.0
+1. **Citation Verification**: 
+   - Extracts all citations from the response
+   - Fetches full page content from each cited URL
+   - Verifies URL accessibility and retrieves page content
+2. **Claim-Source Verification** (NEW):
+   - Extracts specific factual claims from the response
+   - For each claim, finds nearby citations (within 200 characters)
+   - **Verifies if the claim actually appears in the cited page content** using:
+     - Exact phrase matching (highest confidence)
+     - Key phrase matching (extracts 3-5 word phrases)
+     - Word overlap analysis (meaningful word matching)
+     - LLM semantic verification (if `use_llm=True`)
+   - Calculates verification rate: % of claims that match their cited sources
+3. **Base Score Calculation** (weighted by both rate and absolute numbers):
+   - No citations found → 6.0 (neutral, can't verify)
+   - Accessibility rate ≥ 90%:
+     - 3+ accessible citations → 9.5 (excellent)
+     - 2 accessible citations → 9.0 (very good)
+     - 1 accessible citation → 8.5 (good)
+   - Accessibility rate ≥ 70%:
+     - 2+ accessible citations → 8.0 (good)
+     - 1 accessible citation → 7.0 (acceptable)
+   - Accessibility rate ≥ 50% → 6.0 (neutral)
+   - Accessibility rate ≥ 30% → 4.0 (poor)
+   - Accessibility rate < 30%:
+     - 3+ total citations → 2.0 (critical)
+     - <3 total citations → 3.0 (poor)
 
-3. **Content Adjustments**:
-   - **Bonus**: +0.2 per accessible citation (max +1.0)
-   - **Penalty**: -0.5 per invalid citation (max -2.0)
-   - **Penalty**: -1.0 for vague claims without citations (if >3 vague indicators)
-   - **Penalty**: -0.5 per unverifiable claim pattern (max -2.0)
+3. **Claim-Source Alignment Analysis**:
+   - Extracts specific factual claims (statistics, dates, research findings, entity claims)
+   - Analyzes proximity of claims to citations
+   - Calculates citation coverage for claims requiring citations
+   - **Bonus**: +0.5 if ≥80% of claims have nearby citations
+   - **Bonus**: +0.2 if ≥50% coverage
+   - **Penalty**: -1.0 if <30% coverage (claims without citations)
 
-4. **LLM Enhancement** (if `use_llm=True`):
-   - Blends 60% citation-based score + 40% LLM evaluation
+4. **Claim-Source Content Verification** (NEW - Core Feature):
+   - **Verifies each claim against the actual content on the cited page**
+   - Fetches full page content from each citation URL
+   - Compares claim text with source content using multiple methods:
+     - **Exact match**: Claim found verbatim in source (confidence: 1.0)
+     - **Key phrase match**: 70%+ of key phrases found (confidence: 0.8)
+     - **Word overlap**: Significant meaningful word overlap (confidence: 0.6)
+     - **LLM semantic**: LLM verifies semantic alignment (if enabled)
+   - **Scoring adjustments based on verification rate**:
+     - Verification rate ≥80%: +1.0 (strong bonus - claims match sources)
+     - Verification rate ≥60%: +0.5 (bonus - majority verified)
+     - Verification rate ≥40%: +0.2 (small bonus - some verified)
+     - Verification rate <30%: -1.5 (strong penalty - claims don't match sources = hallucination)
+     - Verification rate <50%: -0.5 (penalty - low verification)
+
+4. **Content Adjustments**:
+   - **Bonus**: +0.5 for 3+ accessible citations, +0.3 for 2+ accessible citations
+   - **Penalty**: -2.0 max for invalid citation rate >30% (scaled by rate)
+   - **Penalty**: -0.5 for vague claims without citations (if >3 vague indicators)
+   - **Penalty**: -2.0 max for unverifiable claim patterns without citations
+   - **Bonus**: +0.3 for factual language with proper citations
+
+5. **LLM Enhancement** (if `use_llm=True`):
+   - Enhances claim-source verification with semantic analysis
+   - LLM analyzes if claims are supported by source content (even if not exact match)
+   - Detects subtle hallucinations and misrepresentations
+   - Blends 65% rule-based (citation verification + claim-source verification) + 35% LLM validation
+
+**Key Innovation**: Unlike simple URL checking, this system **actually verifies that the information in the response matches what's written on the cited website**, providing true fact-checking rather than just citation accessibility checking.
 
 **Key Indicators**:
 - Factual indicators: "according to", "research shows", "studies indicate", "data suggests"
@@ -50,71 +98,131 @@ The Hallucination Score consists of 4 sub-scores that detect different types of 
 
 ### 1.2 Fabricated Citations Score (0-10)
 
-**Purpose**: Detects fabricated or invalid citations.
+**Purpose**: Detects fabricated or invalid citations using comprehensive pattern analysis.
 
 **Calculation Method**:
 1. **Citation Verification**: Verifies all citations for validity and accessibility
-2. **Base Score Calculation**:
-   - No citations → 6 (can't detect fabrication)
-   - Invalid rate > 50% → 2.0 (likely fabricated)
-   - Invalid rate > 30% → 4.0
-   - Invalid rate > 10% → 6.0
-   - Accessibility rate ≥ 90% → 9.0 (likely real)
-   - Accessibility rate ≥ 70% → 8.0
-   - Otherwise → 5.0 (mixed results)
+2. **Base Score Calculation** (prioritizes invalid rate as primary indicator):
+   - No citations → 6.0 (can't detect fabrication)
+   - Invalid rate > 50%:
+     - 3+ invalid citations → 1.0 (critical: many fabricated)
+     - <3 invalid citations → 2.0 (severe: significant fabrication)
+   - Invalid rate > 30% → 3.5 (poor: substantial fabrication)
+   - Invalid rate > 10%:
+     - 2+ accessible citations → 6.0 (acceptable: some invalid but also valid)
+     - <2 accessible citations → 5.0 (borderline: mostly invalid)
+   - Invalid rate < 10%:
+     - Accessibility rate ≥ 90% → 9.0 (excellent: almost all valid)
+     - Accessibility rate ≥ 70% → 8.0 (very good: most valid)
+     - Otherwise → 7.0 (good: mostly valid)
+   - No invalid citations:
+     - Accessibility rate ≥ 90% with 3+ citations → 9.5 (excellent)
+     - Accessibility rate ≥ 90% → 9.0 (excellent)
+     - Accessibility rate ≥ 70% → 8.5 (very good)
+     - Otherwise → 7.5 (good)
 
 3. **Pattern Adjustments**:
-   - **Penalty**: -1.0 per suspicious URL (max -3.0)
-   - **Penalty**: -1.0 if citation mentions exceed actual citations × 2
-   - **Bonus**: +0.2 per academic citation format (max +1.0)
+   - **Suspicious URLs**: Penalty scaled by suspicious rate
+     - >50% suspicious → -2.5 (severe)
+     - >30% suspicious → -1.5 (strong)
+     - Otherwise → -0.5 per suspicious URL (moderate)
+   - **Citation-Text Mismatch**: 
+     - Mentions/citations ratio >3.0 → -1.5 (strong mismatch)
+     - Mentions/citations ratio >2.0 → -0.5 (moderate mismatch)
+     - Many mentions but no citations → -1.0
+   - **Duplicate Citations**: 
+     - 3+ duplicates → -1.0 (excessive duplication)
+     - 2 duplicates → -0.3 (some duplication)
+   - **Citation Distribution**: 
+     - Citations clustered in <10% of text → -0.5 (suspicious clustering)
+   - **Proper Formats**: 
+     - 3+ academic/DOI citations → +0.5 (bonus for legitimacy)
+     - Some proper formats → +0.2 (small bonus)
 
 4. **LLM Enhancement** (if `use_llm=True`):
-   - Blends 70% verification-based + 30% LLM evaluation
+   - Analyzes citation patterns for systematic fabrication indicators
+   - Blends 75% verification-based (objective) + 25% LLM pattern analysis
 
-**Suspicious URL Patterns**: "example.com", "test.com", "placeholder", "fake", "localhost"
+**Suspicious URL Patterns**: "example.com", "test.com", "placeholder", "fake", "localhost", "127.0.0.1"
 
 ### 1.3 Contradictory Information Score (0-10)
 
-**Purpose**: Identifies contradictory information within the response.
+**Purpose**: Identifies contradictory information within the response using multi-method detection.
 
 **Calculation Method**:
-1. **Sentence Analysis**: Splits response into sentences
-2. **Contradiction Detection** (3 methods):
-   - **Method 1**: Extracts factual claims and compares for contradictions
-   - **Method 2**: Semantic contradiction detection using embeddings (if available)
-   - **Method 3**: Explicit contradiction pattern detection
+1. **Sentence Analysis**: Splits response into meaningful sentences (>10 chars)
+2. **Contradiction Detection** (4 weighted methods):
+   - **Method 1**: Factual claim comparison (weight: 1.0)
+     - Extracts claims with same subject, detects conflicting values
+     - Handles numeric contradictions (2x difference threshold)
+     - Detects semantic opposites
+   - **Method 2**: Semantic contradiction detection (weight: 0.7)
+     - Uses embeddings to find semantically opposite statements
+     - Checks for negation relationships
+     - Requires shared subjects with low similarity
+   - **Method 3**: Explicit contradiction patterns (weight: 1.2)
+     - Detects "X is Y" vs "X is not Y" patterns
+     - Most reliable method, highest weight
+   - **Method 4**: Temporal/logical consistency (weight: 0.8)
+     - Detects conflicting temporal claims (same event, different years)
+     - Identifies contradictory conditional logic
+     - Checks cause-effect contradictions
 
-3. **Score Conversion**:
-   - 0 contradictions → 10.0
-   - < 1 contradiction → 9.0
-   - < 2 contradictions → 7.0
-   - < 3 contradictions → 5.0
-   - < 4 contradictions → 3.0
-   - ≥ 4 contradictions → 1.0
+3. **Score Conversion** (weighted contradiction score):
+   - 0 contradictions → 10.0 (perfect)
+   - < 0.5 → 9.5 (excellent: minimal)
+   - < 1.0 → 9.0 (very good: very few)
+   - < 1.5 → 8.0 (good: few)
+   - < 2.0 → 7.0 (acceptable: some)
+   - < 3.0 → 5.0 (poor: moderate)
+   - < 4.0 → 3.0 (critical: significant)
+   - < 6.0 → 1.5 (severe: many)
+   - ≥ 6.0 → 0.5 (critical: extensive)
 
-4. **LLM Enhancement** (if `use_llm=True`):
-   - Blends 60% rule-based + 40% LLM validation
+4. **Normalization**: Adjusts for text length (longer texts may have more contradictions naturally)
 
-**Contradiction Patterns**: Direct contradictions, conflicting factual claims, logical inconsistencies
+5. **LLM Enhancement** (if `use_llm=True`):
+   - Detects subtle contradictions and logical inconsistencies
+   - Blends 65% rule-based (objective detection) + 35% LLM (nuanced validation)
+
+**Contradiction Patterns**: 
+- Direct contradictions: "X is Y" vs "X is not Y"
+- Conflicting factual claims: Same subject, different values
+- Temporal inconsistencies: Same event, different times
+- Logical inconsistencies: Contradictory conditionals
+- Causal contradictions: X causes Y vs X prevents Y
 
 ### 1.4 Multi-LLM Comparison Score (0-10)
 
-**Purpose**: Compares response against multiple LLM responses to detect outliers.
+**Purpose**: Compares response against multiple LLM responses to detect outliers using multi-metric consensus analysis.
 
 **Calculation Method**:
-1. **Word-based Similarity** (default):
+1. **Word-based Similarity** (improved tokenization):
    - Uses Jaccard similarity: `intersection / union` of word sets
-   - Filters words with length ≤ 2
+   - Filters meaningful words (length ≥ 3, removes stop words)
+   - Normalizes text (removes punctuation, handles contractions)
    - Calculates average similarity across all other responses
 
-2. **Embedding Enhancement** (if `use_embeddings=True`):
+2. **Semantic Similarity** (if `use_embeddings=True`):
    - Generates embeddings for all responses
    - Calculates cosine similarity between embeddings
-   - Blends 40% word-based + 60% semantic similarity
+   - More accurate than word-based for semantic understanding
 
-3. **Score Conversion**:
-   - `score = average_similarity × 10` (clamped to 0-10)
-   - Higher similarity = higher score (more consensus = less hallucination)
+3. **Consensus Analysis**:
+   - Measures similarity variance (lower variance = higher consensus)
+   - Detects if response is an outlier from the group
+   - Consensus score = average similarity × (1 - normalized_variance × 0.3)
+
+4. **Score Combination** (weighted average):
+   - **With embeddings**: 50% semantic + 30% word + 20% consensus
+   - **Without embeddings**: 60% word + 40% consensus
+
+5. **Score Conversion** (non-linear scaling for better discrimination):
+   - Similarity ≥ 0.9 → 9.5-10.0 (excellent consensus)
+   - Similarity ≥ 0.7 → 8.0-9.5 (very good consensus)
+   - Similarity ≥ 0.5 → 6.0-8.0 (acceptable consensus)
+   - Similarity ≥ 0.3 → 4.0-6.0 (poor consensus)
+   - Similarity < 0.3 → 0-4.0 (very poor consensus, likely outlier)
 
 **Note**: Returns 6 if only one response is available (can't compare)
 

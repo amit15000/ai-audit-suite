@@ -1,7 +1,7 @@
 """FastAPI dependencies for authentication."""
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -15,20 +15,31 @@ security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    access_token: str | None = Cookie(None, alias="access_token"),
     db: Session = Depends(get_db),
 ) -> User:
-    """Get the current authenticated user from JWT token."""
+    """Get the current authenticated user from JWT token.
+    
+    Supports both Bearer token (Authorization header) and HTTP-only cookies.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    if credentials is None:
+    # Try to get token from Bearer header first, then from cookie
+    token = None
+    if credentials:
+        token = credentials.credentials
+    elif access_token:
+        token = access_token
+    
+    if token is None:
         raise credentials_exception
     
-    token = credentials.credentials
     payload = decode_token(token)
     if payload is None:
         # Provide more helpful error message

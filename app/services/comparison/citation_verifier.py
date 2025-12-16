@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -31,6 +31,7 @@ class CitationVerificationResult:
     is_accessible: bool  # URL can be fetched
     status_code: Optional[int] = None
     content_preview: Optional[str] = None  # First 500 chars of content
+    full_content: Optional[str] = None  # Full page content for claim verification
     error: Optional[str] = None
 
 
@@ -197,13 +198,13 @@ class CitationVerifier:
         try:
             # Make HEAD request first (faster, checks if accessible)
             try:
-                response = await client.head(url, allow_redirects=True)
+                response = await client.head(url, follow_redirects=True)
                 status_code = response.status_code
                 is_accessible = 200 <= status_code < 400
             except Exception:
                 # If HEAD fails, try GET
                 try:
-                    response = await client.get(url, allow_redirects=True)
+                    response = await client.get(url, follow_redirects=True)
                     status_code = response.status_code
                     is_accessible = 200 <= status_code < 400
                 except Exception as e:
@@ -214,28 +215,40 @@ class CitationVerifier:
                         error=str(e)
                     )
             
-            # Get content preview if accessible
+            # Fetch full content if accessible for claim verification
             content_preview = None
-            if is_accessible and response.status_code == 200:
+            full_content = None
+            if is_accessible and status_code == 200:
                 try:
-                    # Only fetch text content
-                    content_type = response.headers.get('content-type', '').lower()
+                    # Fetch full content
+                    get_response = await client.get(url)
+                    content_type = get_response.headers.get('content-type', '').lower()
+                    
                     if 'text/html' in content_type or 'text/plain' in content_type:
-                        # Fetch full content for preview
-                        get_response = await client.get(url)
-                        content = get_response.text[:1000]  # First 1000 chars
-                        # Extract text (remove HTML tags roughly)
-                        content = re.sub(r'<[^>]+>', '', content)
-                        content_preview = content[:500]  # First 500 chars
-                except Exception:
-                    pass  # Content preview is optional
+                        # Extract text content (remove HTML tags)
+                        raw_content = get_response.text
+                        
+                        # Remove HTML tags and clean up whitespace
+                        text_content = re.sub(r'<[^>]+>', ' ', raw_content)
+                        text_content = re.sub(r'\s+', ' ', text_content)  # Normalize whitespace
+                        text_content = text_content.strip()
+                        
+                        # Store full content for claim verification (limit to 50KB for performance)
+                        full_content = text_content[:50000] if len(text_content) > 50000 else text_content
+                        
+                        # Store preview (first 500 chars)
+                        content_preview = full_content[:500] if full_content else None
+                except Exception as e:
+                    logger.warning("Failed to fetch citation content", url=url, error=str(e))
+                    # Content fetch is optional, continue with verification
             
             return CitationVerificationResult(
                 citation=citation,
                 is_valid=True,
                 is_accessible=is_accessible,
                 status_code=status_code,
-                content_preview=content_preview
+                content_preview=content_preview,
+                full_content=full_content
             )
             
         except httpx.TimeoutException:
@@ -297,19 +310,216 @@ class CitationVerifier:
                 'valid': 0,
                 'accessible': 0,
                 'invalid': 0,
-                'accessibility_rate': 0.0
+                'accessibility_rate': 0.0,
+                'with_content': 0
             }
         
         total = len(verification_results)
         valid = sum(1 for r in verification_results if r.is_valid)
         accessible = sum(1 for r in verification_results if r.is_accessible)
         invalid = total - valid
+        with_content = sum(1 for r in verification_results if r.full_content is not None)
         
         return {
             'total': total,
             'valid': valid,
             'accessible': accessible,
             'invalid': invalid,
-            'accessibility_rate': accessible / total if total > 0 else 0.0
+            'accessibility_rate': accessible / total if total > 0 else 0.0,
+            'with_content': with_content,
+            'content_rate': with_content / total if total > 0 else 0.0
+        }
+
+    async def verify_claim_source_alignment(
+        self, 
+        claim: str, 
+        verification_result: CitationVerificationResult,
+        use_llm: bool = False,
+        ai_service = None,
+        judge_platform_id: Optional[str] = None
+    ) -> dict:
+        """Verify if a claim in the response matches the content on the cited page.
+        
+        Args:
+            claim: The factual claim from the response to verify
+            verification_result: Citation verification result with page content
+            use_llm: Whether to use LLM for semantic verification (default: False)
+            ai_service: AI service for LLM verification (required if use_llm=True)
+            judge_platform_id: Platform ID for LLM (required if use_llm=True)
+            
+        Returns:
+            Dictionary with:
+            - verified: bool - Whether claim is verified in source
+            - confidence: float - Confidence score (0.0-1.0)
+            - method: str - Verification method used
+            - explanation: str - Brief explanation
+        """
+        if not verification_result.is_accessible or not verification_result.full_content:
+            return {
+                'verified': False,
+                'confidence': 0.0,
+                'method': 'no_content',
+                'explanation': 'Citation not accessible or content not available'
+            }
+        
+        source_content = verification_result.full_content.lower()
+        claim_lower = claim.lower()
+        
+        # Method 1: Exact phrase matching (highest confidence)
+        if claim_lower in source_content:
+            return {
+                'verified': True,
+                'confidence': 1.0,
+                'method': 'exact_match',
+                'explanation': 'Claim found verbatim in source'
+            }
+        
+        # Method 2: Key phrase matching (extract key phrases from claim)
+        key_phrases = self._extract_key_phrases(claim)
+        matched_phrases = sum(1 for phrase in key_phrases if phrase in source_content)
+        phrase_match_ratio = matched_phrases / len(key_phrases) if key_phrases else 0
+        
+        if phrase_match_ratio >= 0.7:
+            return {
+                'verified': True,
+                'confidence': 0.8,
+                'method': 'key_phrase_match',
+                'explanation': f'{matched_phrases}/{len(key_phrases)} key phrases found in source'
+            }
+        
+        # Method 3: Semantic similarity (if LLM available)
+        if use_llm and ai_service and judge_platform_id:
+            try:
+                return await self._verify_with_llm(
+                    claim, source_content, ai_service, judge_platform_id
+                )
+            except Exception as e:
+                logger.warning("LLM verification failed", error=str(e))
+        
+        # Method 4: Partial word overlap (lower confidence)
+        claim_words = set(claim_lower.split())
+        source_words = set(source_content.split())
+        common_words = claim_words & source_words
+        
+        # Filter out common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their'}
+        meaningful_common = common_words - stop_words
+        
+        if len(meaningful_common) >= 3:
+            overlap_ratio = len(meaningful_common) / max(len(claim_words - stop_words), 1)
+            if overlap_ratio >= 0.5:
+                return {
+                    'verified': True,
+                    'confidence': 0.6,
+                    'method': 'word_overlap',
+                    'explanation': f'Significant word overlap ({len(meaningful_common)} words)'
+                }
+        
+        # No verification found
+        return {
+            'verified': False,
+            'confidence': 0.0,
+            'method': 'no_match',
+            'explanation': 'Claim not found in source content'
+        }
+
+    def _extract_key_phrases(self, text: str) -> list[str]:
+        """Extract key phrases from text for matching.
+        
+        Args:
+            text: Text to extract phrases from
+            
+        Returns:
+            List of key phrases (3-5 word sequences)
+        """
+        words = text.lower().split()
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their'}
+        
+        # Extract meaningful phrases (3-5 words, excluding stop words)
+        phrases = []
+        for i in range(len(words) - 2):
+            phrase_words = words[i:i+3]
+            if len([w for w in phrase_words if w not in stop_words]) >= 2:
+                phrases.append(' '.join(phrase_words))
+        
+        # Also extract longer phrases (4-5 words)
+        for i in range(len(words) - 3):
+            phrase_words = words[i:i+4]
+            if len([w for w in phrase_words if w not in stop_words]) >= 3:
+                phrases.append(' '.join(phrase_words))
+        
+        # Return unique phrases, sorted by length (longer first)
+        return sorted(set(phrases), key=len, reverse=True)[:10]  # Top 10 phrases
+
+    async def _verify_with_llm(
+        self, 
+        claim: str, 
+        source_content: str,
+        ai_service,
+        judge_platform_id: str
+    ) -> dict:
+        """Verify claim using LLM semantic analysis.
+        
+        Args:
+            claim: Claim to verify
+            source_content: Source page content (truncated to 5000 chars for efficiency)
+            ai_service: AI service for LLM
+            judge_platform_id: Platform ID for LLM
+            
+        Returns:
+            Verification result dictionary
+        """
+        # Truncate source content for LLM (keep first 5000 chars)
+        truncated_source = source_content[:5000]
+        
+        prompt = f"""Verify if the following claim is supported by the source content.
+
+Claim: {claim}
+
+Source Content (from cited page):
+{truncated_source}
+
+Analyze whether the claim accurately represents information found in the source.
+Consider:
+1. Is the claim directly stated in the source?
+2. Is the claim a reasonable inference from the source?
+3. Does the claim contradict the source?
+4. Is the claim not mentioned in the source?
+
+Return ONLY JSON: {{
+    "verified": <true|false>,
+    "confidence": <0.0-1.0>,
+    "explanation": "<brief explanation>"
+}}"""
+        
+        from app.services.comparison.utils import JUDGE_SYSTEM_PROMPT
+        if not judge_platform_id:
+            raise ValueError("judge_platform_id is required for LLM verification")
+        judge_response = await ai_service.get_response(
+            judge_platform_id, prompt, system_prompt=JUDGE_SYSTEM_PROMPT
+        )
+        
+        # Parse JSON response (simplified - in production use proper JSON parsing)
+        import json
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{[^}]+\}', judge_response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group(0))
+                return {
+                    'verified': result.get('verified', False),
+                    'confidence': float(result.get('confidence', 0.0)),
+                    'method': 'llm_semantic',
+                    'explanation': result.get('explanation', 'LLM verification')
+                }
+        except Exception:
+            pass
+        
+        # Fallback
+        return {
+            'verified': False,
+            'confidence': 0.0,
+            'method': 'llm_failed',
+            'explanation': 'LLM verification failed'
         }
 

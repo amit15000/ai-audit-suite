@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import timedelta
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -40,6 +42,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 )
 async def login(
     request: LoginRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> LoginResponse:
     """User login endpoint."""
@@ -58,6 +61,27 @@ async def login(
             )
         
         tokens = create_tokens_for_user(user)
+        
+        # Set HTTP-only cookies for 1 month
+        max_age = 30 * 24 * 60 * 60  # 30 days in seconds
+        response.set_cookie(
+            key="access_token",
+            value=tokens["access_token"],
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=tokens["refresh_token"],
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
         
         return LoginResponse(
             success=True,
@@ -96,6 +120,7 @@ async def login(
 )
 async def register(
     request: RegisterRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> RegisterResponse:
     """User registration endpoint."""
@@ -114,9 +139,33 @@ async def register(
                 },
             )
         
-        # Create new user
+        # Create new user - ensure it's committed
         user = create_user(db, request.email, request.password, request.name)
+        # Ensure the user is persisted by refreshing the session
+        db.refresh(user)
+        
         tokens = create_tokens_for_user(user)
+        
+        # Set HTTP-only cookies for 1 month
+        max_age = 30 * 24 * 60 * 60  # 30 days in seconds
+        response.set_cookie(
+            key="access_token",
+            value=tokens["access_token"],
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=tokens["refresh_token"],
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
         
         return RegisterResponse(
             success=True,
@@ -159,6 +208,7 @@ async def register(
 )
 async def refresh_token(
     request: RefreshTokenRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> RefreshTokenResponse:
     """Refresh access token endpoint."""
@@ -220,6 +270,27 @@ async def refresh_token(
         # Generate new access token (keep the same refresh token)
         user_id_str = str(user.id)  # type: ignore[arg-type]
         new_access_token = create_access_token(data={"sub": user_id_str})
+        
+        # Update cookies
+        max_age = 30 * 24 * 60 * 60  # 30 days in seconds
+        response.set_cookie(
+            key="access_token",
+            value=new_access_token,
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=request.refreshToken,
+            max_age=max_age,
+            httponly=True,
+            secure=False,  # Set to True in production with HTTPS
+            samesite="lax",
+            path="/",
+        )
         
         return RefreshTokenResponse(
             success=True,

@@ -31,8 +31,12 @@ def create_user(db: Session, email: str, password: str, name: str | None = None)
         name=name,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        raise e
     return user
 
 

@@ -173,6 +173,52 @@ class GroqAdapter(BaseAdapter):
                 error=str(e),
             )
 
+    async def invoke_streaming(self, invocation: AdapterInvocation):
+        """Invoke Groq API with streaming."""
+        started = time.perf_counter()
+        client = self._get_client()
+
+        try:
+            url = "/chat/completions"
+            
+            messages = []
+            if invocation.system_prompt:
+                messages.append({"role": "system", "content": invocation.system_prompt})
+            messages.append({"role": "user", "content": invocation.instructions})
+            
+            request_body = {
+                "model": self._model,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 1024,
+                "stream": True,  # Enable streaming
+            }
+
+            async with client.stream("POST", url, json=request_body) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or line.startswith("data: [DONE]"):
+                        continue
+                    if line.startswith("data: "):
+                        import json
+                        try:
+                            data = json.loads(line[6:])  # Remove "data: " prefix
+                            choices = data.get("choices", [])
+                            if choices and len(choices) > 0:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.warning("Groq streaming failed, falling back to non-streaming", error=str(e))
+            # Fall back to non-streaming
+            response = await self.invoke_async(invocation)
+            if response.error:
+                raise ValueError(response.error)
+            yield response.text
+
     async def close(self):
         """Close HTTP client."""
         if self._client:

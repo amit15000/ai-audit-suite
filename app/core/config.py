@@ -23,6 +23,18 @@ class DatabaseSettings(BaseSettings):
     url: str = "sqlite:///var/audit.db"
     pool_size: int = 5
     max_overflow: int = 5
+    
+    @model_validator(mode="after")
+    def load_from_env(self) -> "DatabaseSettings":
+        """Load database URL from environment variable if set."""
+        # Check if SUPABASE_DB_URL is set (for Supabase connection)
+        supabase_url = os.getenv("SUPABASE_DB_URL")
+        if supabase_url:
+            self.url = supabase_url  # type: ignore[assignment]
+        # Otherwise use DB_URL if set
+        elif os.getenv("DB_URL"):
+            self.url = os.getenv("DB_URL") or self.url  # type: ignore[assignment]
+        return self
 
 
 class StorageSettings(BaseSettings):
@@ -91,7 +103,7 @@ class JWTSettings(BaseSettings):
     secret_key: str = "your-secret-key-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
+    refresh_token_expire_days: int = 30  # Changed to 30 days (1 month)
 
 
 class CelerySettings(BaseSettings):

@@ -198,11 +198,59 @@ class GeminiAdapter(BaseAdapter):
                 error=str(e),
             )
 
+    async def invoke_streaming(self, invocation: AdapterInvocation):
+        """Invoke Gemini API with streaming."""
+        client = self._get_client()
+
+        try:
+            url = f"/models/{self._model}:streamGenerateContent"
+            logger.debug("Calling Gemini API with streaming", url=url, model=self._model)
+
+            request_body: Dict[str, Any] = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": invocation.instructions}
+                        ]
+                    }
+                ]
+            }
+            if invocation.system_prompt:
+                request_body["systemInstruction"] = {
+                    "parts": [{"text": invocation.system_prompt}]
+                }
+
+            async with client.stream("POST", url, json=request_body) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    import json
+                    try:
+                        data = json.loads(line)
+                        candidates = data.get("candidates", [])
+                        if candidates and len(candidates) > 0:
+                            content = candidates[0].get("content", {})
+                            parts = content.get("parts", [])
+                            if parts and len(parts) > 0:
+                                text = parts[0].get("text", "")
+                                if text:
+                                    yield text
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.warning("Gemini streaming failed, falling back to non-streaming", error=str(e))
+            # Fall back to non-streaming
+            response = await self.invoke_async(invocation)
+            if response.error:
+                raise ValueError(response.error)
+            yield response.text
+
     async def close(self):
         """Close HTTP client."""
         if self._client:
             await self._client.aclose()
-            self._client = None
+        self._client = None
 
 
 # Register the adapter

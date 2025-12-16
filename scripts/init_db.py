@@ -1,10 +1,9 @@
 """Initialize database and create test user."""
 from __future__ import annotations
 
-from app.core.database import init_db
+from app.core.database import init_db, get_session_factory
 from app.core.config import get_settings
-from app.services.auth_service import create_user
-from app.core.database import get_session_factory
+from app.services.core.auth_service import create_user, get_user_by_email
 
 def main():
     """Initialize database and create test user."""
@@ -16,7 +15,6 @@ def main():
     db = get_session_factory()()
     try:
         # Check if user already exists
-        from app.services.auth_service import get_user_by_email
         existing_user = get_user_by_email(db, "test@example.com")
         if existing_user:
             print("Test user already exists!")
