@@ -27,13 +27,12 @@ class DatabaseSettings(BaseSettings):
     @model_validator(mode="after")
     def load_from_env(self) -> "DatabaseSettings":
         """Load database URL from environment variable if set."""
-        # Check if SUPABASE_DB_URL is set (for Supabase connection)
-        supabase_url = os.getenv("SUPABASE_DB_URL")
-        if supabase_url:
-            self.url = supabase_url  # type: ignore[assignment]
-        # Otherwise use DB_URL if set
-        elif os.getenv("DB_URL"):
-            self.url = os.getenv("DB_URL") or self.url  # type: ignore[assignment]
+        # Prioritize DB_URL for local Docker/PostgreSQL connections
+        if os.getenv("DB_URL"):
+            self.url = os.getenv("DB_URL")  # type: ignore[assignment]
+        # Fallback to SUPABASE_DB_URL if DB_URL is not set (for Supabase connection)
+        elif os.getenv("SUPABASE_DB_URL"):
+            self.url = os.getenv("SUPABASE_DB_URL")  # type: ignore[assignment]
         return self
 
 

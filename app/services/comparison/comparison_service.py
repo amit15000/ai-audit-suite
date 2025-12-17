@@ -1,6 +1,7 @@
 """Service for processing comparisons."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
@@ -123,7 +124,8 @@ async def process_comparison(
                     nonlocal accumulated_text
                     accumulated_text = accumulated
                     if event_manager:
-                        # Emit chunk event immediately (awaited)
+                        # Emit chunk event immediately (awaited) - no buffering
+                        # This ensures word-by-word streaming to the frontend
                         await event_manager.emit_event(
                             "response_chunk",
                             platform_id=platform_id,
@@ -132,6 +134,8 @@ async def process_comparison(
                                 "accumulated_text": accumulated,
                             },
                         )
+                        # Yield control to allow event to be sent immediately
+                        await asyncio.sleep(0)
                 
                 # Stream response word-by-word
                 full_response = ""
@@ -144,15 +148,23 @@ async def process_comparison(
                 
                 responses[platform_id] = full_response
                 
-                # Update partial results in database
+                # Update partial results in database - preserve response text
+                current_partial = comparison.results if isinstance(comparison.results, dict) else {}
+                existing_partial_responses = current_partial.get("partial_responses", {})
+                existing_partial_responses[platform_id] = {
+                    "response": full_response,
+                    "platform_name": get_platform_name(platform_id),
+                }
                 _update_partial_results(db, comparison, {
-                    "partial_responses": {
-                        platform_id: {
-                            "response": full_response,
-                            "platform_name": get_platform_name(platform_id),
-                        }
-                    }
+                    "partial_responses": existing_partial_responses
                 })
+                
+                # Emit response complete event
+                if event_manager:
+                    await event_manager.emit_event("response_complete", platform_id=platform_id, data={
+                        "response": full_response,
+                        "platform_name": get_platform_name(platform_id),
+                    })
                 
                 # Emit response complete event
                 if event_manager:
@@ -364,7 +376,7 @@ async def process_comparison(
         if not platform_results:
             raise ValueError("No platforms successfully processed")
 
-        # Build results JSON
+        # Build results JSON - ensure responses are preserved
         judge_platform_id = str(comparison.judge_platform)  # type: ignore[arg-type]
         results = {
             "comparisonId": str(comparison.id),  # type: ignore[arg-type]
@@ -384,6 +396,12 @@ async def process_comparison(
                 "score": platform_results[0].score,
             },
         }
+        
+        # Preserve partial responses in final results for frontend compatibility
+        if comparison.results and isinstance(comparison.results, dict):
+            partial_responses = comparison.results.get("partial_responses", {})
+            if partial_responses:
+                results["partialResponses"] = partial_responses
 
         # Add similarity analysis to results if available
         if similarity_analysis:

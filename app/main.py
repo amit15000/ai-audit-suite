@@ -26,6 +26,40 @@ def create_app(settings: AppSettings) -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(title="Project W Audit API", version="0.1.0")
     
+    # Validation error handler for better error messages
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Handle validation errors and return user-friendly messages."""
+        errors = exc.errors()
+        error_messages = []
+        
+        for error in errors:
+            field = " -> ".join(str(loc) for loc in error.get("loc", []))
+            error_type = error.get("type", "unknown")
+            error_msg = error.get("msg", "Validation error")
+            
+            # Provide user-friendly messages for common validation errors
+            if error_type == "value_error.email":
+                error_messages.append(f"Invalid email format: {field}")
+            elif error_type == "value_error.str.min_length":
+                error_messages.append(f"Password must be at least 6 characters long")
+            elif error_type == "missing":
+                error_messages.append(f"Missing required field: {field}")
+            else:
+                error_messages.append(f"{field}: {error_msg}")
+        
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "success": False,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "; ".join(error_messages) if error_messages else "Validation error",
+                    "details": errors,
+                },
+            },
+        )
+    
     # Global exception handler for unhandled exceptions
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -106,7 +140,49 @@ def create_app(settings: AppSettings) -> FastAPI:
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
-        return {"status": "ok"}
+        """Health check endpoint with database connectivity status."""
+        from app.core.database import get_engine
+        from sqlalchemy import text
+        
+        health_status: Dict[str, Any] = {
+            "status": "ok",
+            "checks": {
+                "api": "ok"
+            }
+        }
+        
+        # Check database connectivity
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                # Try a simple query to verify connection
+                result = conn.execute(text("SELECT 1"))
+                result.fetchone()
+            health_status["checks"]["database"] = "ok"
+        except Exception as e:
+            error_msg = str(e)
+            health_status["status"] = "degraded"
+            health_status["checks"]["database"] = {
+                "status": "error",
+                "error": error_msg
+            }
+            
+            # Provide helpful diagnostics
+            if "getaddrinfo failed" in error_msg or "failed to resolve host" in error_msg:
+                health_status["checks"]["database"]["diagnosis"] = (
+                    "DNS resolution failed. Check your database URL and network connectivity. "
+                    "Verify the hostname is correct and accessible."
+                )
+            elif "server closed the connection" in error_msg or "connection unexpectedly" in error_msg:
+                health_status["checks"]["database"]["diagnosis"] = (
+                    "Database connection was lost. The server may be unavailable or the connection timed out."
+                )
+            elif "operationalerror" in error_msg.lower():
+                health_status["checks"]["database"]["diagnosis"] = (
+                    "Database operational error. Check your database configuration and credentials."
+                )
+        
+        return health_status
 
     @app.get("/metrics")
     def metrics() -> Response:

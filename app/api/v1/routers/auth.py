@@ -99,13 +99,28 @@ async def login(
         raise
     except Exception as e:
         logger.error("auth.login.error", error=str(e), exc_info=True)
+        error_message = str(e)
+        error_code = "INTERNAL_ERROR"
+        
+        # Handle specific database connection errors
+        if "getaddrinfo failed" in error_message or "failed to resolve host" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Unable to connect to database. Please check your database configuration and network connection."
+        elif "server closed the connection" in error_message or "connection unexpectedly" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Database connection was lost. Please try again."
+        elif "operationalerror" in error_message.lower() or "psycopg" in error_message.lower():
+            error_code = "DATABASE_ERROR"
+            if "connection" in error_message.lower():
+                error_message = "Database connection error. Please check your database configuration."
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "success": False,
                 "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "An error occurred during login",
+                    "code": error_code,
+                    "message": f"An error occurred during login: {error_message}",
                 },
             },
         ) from e
@@ -185,14 +200,28 @@ async def register(
         logger.error("auth.register.error", error=str(e), exc_info=True, error_type=type(e).__name__)
         # Include more details in development
         error_message = str(e)
-        if "no such table" in error_message.lower() or "relation" in error_message.lower():
+        error_code = "INTERNAL_ERROR"
+        
+        # Handle specific database connection errors
+        if "getaddrinfo failed" in error_message or "failed to resolve host" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Unable to connect to database. Please check your database configuration and network connection."
+        elif "server closed the connection" in error_message or "connection unexpectedly" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Database connection was lost. Please try again."
+        elif "no such table" in error_message.lower() or "relation" in error_message.lower():
             error_message = "Database tables not initialized. Please run: python scripts/init_db.py"
+        elif "operationalerror" in error_message.lower() or "psycopg" in error_message.lower():
+            error_code = "DATABASE_ERROR"
+            if "connection" in error_message.lower():
+                error_message = "Database connection error. Please check your database configuration."
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "success": False,
                 "error": {
-                    "code": "INTERNAL_ERROR",
+                    "code": error_code,
                     "message": f"An error occurred during registration: {error_message}",
                 },
             },
@@ -304,13 +333,28 @@ async def refresh_token(
         raise
     except Exception as e:
         logger.error("auth.refresh.error", error=str(e), exc_info=True)
+        error_message = str(e)
+        error_code = "INTERNAL_ERROR"
+        
+        # Handle specific database connection errors
+        if "getaddrinfo failed" in error_message or "failed to resolve host" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Unable to connect to database. Please check your database configuration and network connection."
+        elif "server closed the connection" in error_message or "connection unexpectedly" in error_message:
+            error_code = "DATABASE_CONNECTION_ERROR"
+            error_message = "Database connection was lost. Please try again."
+        elif "operationalerror" in error_message.lower() or "psycopg" in error_message.lower():
+            error_code = "DATABASE_ERROR"
+            if "connection" in error_message.lower():
+                error_message = "Database connection error. Please check your database configuration."
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "success": False,
                 "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "An error occurred during token refresh",
+                    "code": error_code,
+                    "message": f"An error occurred during token refresh: {error_message}",
                 },
             },
         ) from e

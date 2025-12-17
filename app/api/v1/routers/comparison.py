@@ -72,6 +72,10 @@ async def submit_comparison(
         comparison = create_comparison(db, current_user.id, request)
         comparison_id = comparison.id  # Save ID before closing session
 
+        # Create event manager early so streaming works even if frontend connects after processing starts
+        from app.services.comparison.event_manager import get_event_manager
+        event_manager = get_event_manager(comparison_id)
+
         # Process directly in background without Redis/Celery
         import asyncio
         from app.core.database import get_session_factory
@@ -89,7 +93,7 @@ async def submit_comparison(
                     Comparison.id == comparison_id
                 ).first()
                 if background_comparison:
-                    # Get event manager if it exists (created by streaming endpoint)
+                    # Use the event manager created above (or get existing one)
                     from app.services.comparison.event_manager import get_event_manager
                     try:
                         event_manager = get_event_manager(comparison_id)
@@ -164,20 +168,25 @@ async def get_results(
                     },
                 )
             
-            # Return status response if still processing
+            # Return status response if still processing, including partial responses
             if comparison.status in ["queued", "processing"]:
-                raise HTTPException(
-                    status_code=status.HTTP_202_ACCEPTED,
-                    detail={
-                        "success": True,
-                        "data": {
-                            "comparisonId": comparison.id,
-                            "status": comparison.status,
-                            "progress": comparison.progress,
-                            "estimatedTimeRemaining": max(0, 30 - (comparison.progress * 30 // 100)),
-                        },
+                # Get partial responses if available
+                partial_data = {}
+                if comparison.results and isinstance(comparison.results, dict):
+                    partial_responses = comparison.results.get("partial_responses", {})
+                    if partial_responses:
+                        partial_data["partialResponses"] = partial_responses
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "comparisonId": comparison.id,
+                        "status": comparison.status,
+                        "progress": comparison.progress,
+                        "estimatedTimeRemaining": max(0, 30 - (comparison.progress * 30 // 100)),
+                        **partial_data,
                     },
-                )
+                }
             
             # If failed, return error
             raise HTTPException(

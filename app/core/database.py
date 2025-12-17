@@ -25,13 +25,33 @@ def get_engine():
         elif db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
     
-    return create_engine(
-        db_url,
-        pool_size=settings.pool_size,
-        max_overflow=settings.max_overflow,
-        echo=False,
-        future=True,
-    )
+    # Configure engine with connection health checks and recycling
+    engine_kwargs = {
+        "pool_size": settings.pool_size,
+        "max_overflow": settings.max_overflow,
+        "echo": False,
+        "future": True,
+    }
+    
+    # Add connection health checks for PostgreSQL
+    if db_url.startswith("postgresql"):
+        # Pre-ping connections to check if they're alive before using them
+        engine_kwargs["pool_pre_ping"] = True
+        # Recycle connections after 1 hour to prevent stale connections
+        engine_kwargs["pool_recycle"] = 3600
+        # Set connection timeout to 10 seconds
+        connect_args = {"connect_timeout": 10}
+        
+        # For Supabase connections, enable SSL (most Supabase instances require SSL)
+        # Check if this is a Supabase connection by looking for supabase.co in the hostname
+        if "supabase.co" in db_url:
+            # Use require mode (doesn't verify certificate, but encrypts connection)
+            # This is sufficient for most Supabase connections
+            connect_args["sslmode"] = "require"
+        
+        engine_kwargs["connect_args"] = connect_args
+    
+    return create_engine(db_url, **engine_kwargs)
 
 
 def get_session_factory():

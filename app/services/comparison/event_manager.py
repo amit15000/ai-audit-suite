@@ -58,9 +58,9 @@ class ComparisonEventManager:
         try:
             while not self._closed:
                 try:
-                    # Get event with a short timeout to allow checking closed status
-                    # Use shorter timeout (0.1s) for more responsive streaming
-                    event = await asyncio.wait_for(self._event_queue.get(), timeout=0.1)
+                    # Get event with a very short timeout for immediate delivery
+                    # Reduced to 0.01s (10ms) for near-instant streaming
+                    event = await asyncio.wait_for(self._event_queue.get(), timeout=0.01)
                     
                     # Format as SSE and yield immediately
                     event_str = f"data: {json.dumps(event)}\n\n"
