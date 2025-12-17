@@ -148,11 +148,12 @@ async def process_comparison(
                 
                 responses[platform_id] = full_response
                 
-                # Update partial results in database - preserve response text
+                # Update partial results in database - preserve response text with normal and expanded views
                 current_partial = comparison.results if isinstance(comparison.results, dict) else {}
                 existing_partial_responses = current_partial.get("partial_responses", {})
                 existing_partial_responses[platform_id] = {
-                    "response": full_response,
+                    "normal": full_response[:500] if len(full_response) > 500 else full_response,  # Summary view (first 500 chars)
+                    "expanded": full_response,  # Full response view
                     "platform_name": get_platform_name(platform_id),
                 }
                 _update_partial_results(db, comparison, {
