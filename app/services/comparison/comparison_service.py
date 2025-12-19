@@ -101,28 +101,75 @@ async def process_comparison(
         scorer = AuditScorer()
         judge_service = JudgeLLMService()
 
-        # Get responses from all platforms
+        # Get responses from all platforms in parallel
         # selected_platforms is JSON column storing a list - cast for type checker
         selected_platforms_list: list[str] = comparison.selected_platforms if isinstance(comparison.selected_platforms, list) else []  # type: ignore[assignment]
         responses: dict[str, str] = {}
         total_platforms = len(selected_platforms_list)
 
-        for idx, platform_id in enumerate(selected_platforms_list):
+        # Lock for database updates to prevent race conditions
+        db_lock = asyncio.Lock()
+
+        # CRITICAL: Emit ALL response_started events simultaneously BEFORE starting any API calls
+        # This ensures all platforms appear to start within 100ms of each other
+        if event_manager:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            import time
+            start_time = time.time()
+            
+            # Emit all response_started events in parallel
+            start_tasks = [
+                event_manager.emit_event("response_started", platform_id=platform_id, data={
+                    "platform_name": get_platform_name(platform_id),
+                })
+                for platform_id in selected_platforms_list
+            ]
+            await asyncio.gather(*start_tasks)  # All events sent simultaneously
+            
+            elapsed = (time.time() - start_time) * 1000  # Convert to milliseconds
+            logger.info(
+                "comparison.all_response_started_emitted",
+                comparison_id=str(comparison.id),
+                platform_count=len(selected_platforms_list),
+                elapsed_ms=elapsed,
+            )
+
+        async def process_platform_response(platform_id: str) -> tuple[str, str]:
+            """Process a single platform's response asynchronously.
+            
+            Returns:
+                tuple of (platform_id, response_text) or (platform_id, error_message)
+            """
             try:
                 prompt_text = str(comparison.prompt)  # type: ignore[arg-type]
                 
-                # Emit response started event
-                if event_manager:
-                    await event_manager.emit_event("response_started", platform_id=platform_id, data={
-                        "platform_name": get_platform_name(platform_id),
-                    })
+                # Note: response_started event already emitted above for all platforms simultaneously
                 
                 # Use streaming to get response with proper event emission
                 accumulated_text = ""
+                first_chunk_received = False
+                api_call_start_time = None
+                import structlog
+                import time
+                logger = structlog.get_logger(__name__)
+                
                 async def on_chunk(chunk: str, accumulated: str) -> None:
                     """Async callback for each chunk - emits events immediately."""
-                    nonlocal accumulated_text
+                    nonlocal accumulated_text, first_chunk_received, api_call_start_time
                     accumulated_text = accumulated
+                    
+                    # Log first chunk timing
+                    if not first_chunk_received and api_call_start_time:
+                        first_chunk_received = True
+                        elapsed = (time.time() - api_call_start_time) * 1000  # ms
+                        logger.info(
+                            "comparison.first_chunk_received",
+                            platform_id=platform_id,
+                            elapsed_ms=elapsed,
+                            chunk_preview=chunk[:50] if chunk else "",
+                        )
+                    
                     if event_manager:
                         # Emit chunk event immediately (awaited) - no buffering
                         # This ensures word-by-word streaming to the frontend
@@ -137,6 +184,14 @@ async def process_comparison(
                         # Yield control to allow event to be sent immediately
                         await asyncio.sleep(0)
                 
+                # Log API call start
+                api_call_start_time = time.time()
+                logger.info(
+                    "comparison.api_call_started",
+                    platform_id=platform_id,
+                    timestamp=api_call_start_time,
+                )
+                
                 # Stream response word-by-word
                 full_response = ""
                 async for chunk in ai_service.get_response_streaming(
@@ -146,25 +201,18 @@ async def process_comparison(
                 ):
                     full_response += chunk
                 
-                responses[platform_id] = full_response
-                
                 # Update partial results in database - preserve response text with normal and expanded views
-                current_partial = comparison.results if isinstance(comparison.results, dict) else {}
-                existing_partial_responses = current_partial.get("partial_responses", {})
-                existing_partial_responses[platform_id] = {
-                    "normal": full_response[:500] if len(full_response) > 500 else full_response,  # Summary view (first 500 chars)
-                    "expanded": full_response,  # Full response view
-                    "platform_name": get_platform_name(platform_id),
-                }
-                _update_partial_results(db, comparison, {
-                    "partial_responses": existing_partial_responses
-                })
-                
-                # Emit response complete event
-                if event_manager:
-                    await event_manager.emit_event("response_complete", platform_id=platform_id, data={
-                        "response": full_response,
+                # Use lock to prevent race conditions with concurrent database updates
+                async with db_lock:
+                    current_partial = comparison.results if isinstance(comparison.results, dict) else {}
+                    existing_partial_responses = current_partial.get("partial_responses", {})
+                    existing_partial_responses[platform_id] = {
+                        "normal": full_response[:500] if len(full_response) > 500 else full_response,  # Summary view (first 500 chars)
+                        "expanded": full_response,  # Full response view
                         "platform_name": get_platform_name(platform_id),
+                    }
+                    _update_partial_results(db, comparison, {
+                        "partial_responses": existing_partial_responses
                     })
                 
                 # Emit response complete event
@@ -173,11 +221,12 @@ async def process_comparison(
                         "response": full_response,
                         "platform_name": get_platform_name(platform_id),
                     })
+                
+                return (platform_id, full_response)
                 
             except Exception as e:
                 # Store error but continue with other platforms
                 error_msg = f"Error: {str(e)}"
-                responses[platform_id] = error_msg
                 
                 # Emit error event
                 if event_manager:
@@ -185,17 +234,42 @@ async def process_comparison(
                         "error": str(e),
                         "stage": "response_generation",
                     })
-            
-            comparison.progress = int((idx + 1) / total_platforms * 40)  # 40% for responses  # type: ignore[assignment]
-            
-            # Emit progress event
-            if event_manager:
-                await event_manager.emit_event("progress", data={
-                    "progress": comparison.progress,
-                    "stage": "response_generation",
-                })
-            
-            db.commit()
+                
+                return (platform_id, error_msg)
+        
+        # Process all platforms in parallel
+        # Create tasks explicitly to ensure all platforms start simultaneously
+        # Using create_task() ensures coroutines are scheduled immediately
+        tasks = [asyncio.create_task(process_platform_response(platform_id)) for platform_id in selected_platforms_list]
+        
+        # Wait for all tasks to complete (they all run concurrently)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Collect responses and handle exceptions
+        completed_count = 0
+        for result in results:
+            if isinstance(result, Exception):
+                # Task raised an exception - log it but continue
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.error("Platform processing exception", error=str(result), exc_info=result)
+                completed_count += 1
+            else:
+                platform_id, response_text = result
+                responses[platform_id] = response_text
+                completed_count += 1
+        
+        # Update progress after all platforms complete
+        comparison.progress = int(completed_count / total_platforms * 40) if total_platforms > 0 else 40  # 40% for responses  # type: ignore[assignment]
+        
+        # Emit progress event
+        if event_manager:
+            await event_manager.emit_event("progress", data={
+                "progress": comparison.progress,
+                "stage": "response_generation",
+            })
+        
+        db.commit()
 
         # Process similarity analysis (embedding & similarity)
         similarity_analysis = None

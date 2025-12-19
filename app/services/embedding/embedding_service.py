@@ -1,6 +1,7 @@
 """Service for generating embeddings from text using configured embedding model."""
 from __future__ import annotations
 
+import asyncio
 import structlog
 from typing import List
 
@@ -58,9 +59,14 @@ class EmbeddingService:
                 text_length=len(text),
             )
 
-            response = self.client.embeddings.create(
-                model=self.model_name,
-                input=text,
+            # Run synchronous OpenAI API call in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.embeddings.create(
+                    model=self.model_name,
+                    input=text,
+                )
             )
 
             embedding = response.data[0].embedding
@@ -111,9 +117,14 @@ class EmbeddingService:
             if not valid_texts:
                 raise ValueError("No valid texts to embed")
 
-            response = self.client.embeddings.create(
-                model=self.model_name,
-                input=valid_texts,
+            # Run synchronous OpenAI API call in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.embeddings.create(
+                    model=self.model_name,
+                    input=valid_texts,
+                )
             )
 
             embeddings = [item.embedding for item in response.data]

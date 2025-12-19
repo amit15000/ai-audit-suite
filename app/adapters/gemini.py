@@ -71,6 +71,25 @@ class GeminiAdapter(BaseAdapter):
             )
         return self._client
 
+    def _create_client(self) -> httpx.AsyncClient:
+        """Create a new HTTP client for streaming requests.
+        
+        This creates a fresh client instance for each streaming request to avoid
+        blocking issues with shared client instances in parallel execution.
+        """
+        api_key = self._get_api_key()
+        # Use v1beta endpoint as per official documentation
+        base_url = "https://generativelanguage.googleapis.com/v1beta"
+        
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(self._timeout, connect=10.0),
+            headers={
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            base_url=base_url,
+        )
+
     async def invoke_async(self, invocation: AdapterInvocation) -> AdapterResponse:
         """Invoke Gemini API asynchronously using httpx."""
         started = time.perf_counter()
@@ -199,11 +218,22 @@ class GeminiAdapter(BaseAdapter):
             )
 
     async def invoke_streaming(self, invocation: AdapterInvocation):
-        """Invoke Gemini API with streaming."""
-        client = self._get_client()
+        """Invoke Gemini API with streaming.
+        
+        According to Gemini API documentation:
+        - Requires `alt=sse` query parameter for Server-Sent Events format
+        - Response lines are prefixed with `data: ` followed by JSON
+        - Each chunk contains delta text (new text only), not full accumulated text
+        """
+        # Create a fresh client for each streaming request to avoid blocking
+        # Yield control immediately after client creation to allow parallel execution
+        import asyncio
+        client = self._create_client()
+        await asyncio.sleep(0)
 
         try:
-            url = f"/models/{self._model}:streamGenerateContent"
+            # Add alt=sse query parameter for SSE streaming format
+            url = f"/models/{self._model}:streamGenerateContent?alt=sse"
             logger.debug("Calling Gemini API with streaming", url=url, model=self._model)
 
             request_body: Dict[str, Any] = {
@@ -220,31 +250,84 @@ class GeminiAdapter(BaseAdapter):
                     "parts": [{"text": invocation.system_prompt}]
                 }
 
-            async with client.stream("POST", url, json=request_body) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    import json
-                    try:
-                        data = json.loads(line)
-                        candidates = data.get("candidates", [])
-                        if candidates and len(candidates) > 0:
-                            content = candidates[0].get("content", {})
+            chunk_count = 0
+            logger.info("Gemini streaming: starting HTTP stream", url=url, model=self._model, prompt_length=len(invocation.instructions))
+            
+            # Use client as context manager to ensure it's properly closed
+            async with client:
+                # Start the stream - stream will be automatically closed by context manager
+                async with client.stream("POST", url, json=request_body) as response:
+                    logger.info("Gemini streaming: HTTP stream context entered", status_code=response.status_code)
+                    response.raise_for_status()
+                    logger.info("Gemini streaming: HTTP stream opened successfully", status_code=response.status_code)
+                    # Yield control to allow other tasks to proceed in parallel
+                    await asyncio.sleep(0)
+                    
+                    # Read from stream line by line
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        # Skip non-data lines (like event types, comments, etc.)
+                        if not line.startswith("data: "):
+                            continue
+                        
+                        # Extract JSON from "data: {...}" format
+                        json_str = line[6:]  # Remove "data: " prefix
+                        if json_str == "[DONE]":
+                            # End of stream marker
+                            logger.debug("Gemini streaming: received [DONE] marker")
+                            break
+                        
+                        import json
+                        try:
+                            data = json.loads(json_str)
+                            candidates = data.get("candidates", [])
+                            if not candidates or len(candidates) == 0:
+                                continue
+                            
+                            candidate = candidates[0]
+                            content = candidate.get("content", {})
+                            if not content:
+                                continue
+                            
                             parts = content.get("parts", [])
-                            if parts and len(parts) > 0:
-                                text = parts[0].get("text", "")
-                                if text:
-                                    yield text
-                    except json.JSONDecodeError:
-                        continue
+                            if not parts or len(parts) == 0:
+                                continue
+                            
+                            # According to Gemini API docs, each chunk contains delta text (new text only)
+                            current_text = parts[0].get("text", "")
+                            if current_text:
+                                chunk_count += 1
+                                if chunk_count == 1:
+                                    logger.info("Gemini streaming: first chunk received", chunk_preview=current_text[:50])
+                                yield current_text
+                                
+                        except json.JSONDecodeError as e:
+                            logger.debug("Gemini streaming: failed to parse JSON", json_str=json_str[:200], error=str(e))
+                            continue
+                        except Exception as e:
+                            logger.warning("Gemini streaming: error processing chunk", error=str(e), exc_info=True)
+                            continue
+                
+                # Log summary
+                logger.info("Gemini streaming: completed", chunk_count=chunk_count, url=url, model=self._model)
+                if chunk_count == 0:
+                    logger.warning("Gemini streaming: no text chunks received - check API response format", url=url, model=self._model)
         except Exception as e:
-            logger.warning("Gemini streaming failed, falling back to non-streaming", error=str(e))
+            logger.error("Gemini streaming failed, falling back to non-streaming", error=str(e), exc_info=True)
             # Fall back to non-streaming
-            response = await self.invoke_async(invocation)
-            if response.error:
-                raise ValueError(response.error)
-            yield response.text
+            try:
+                response = await self.invoke_async(invocation)
+                if response.error:
+                    raise ValueError(response.error)
+                # Yield the full response as a single chunk
+                if response.text:
+                    yield response.text
+            except Exception as fallback_error:
+                logger.error("Gemini fallback to non-streaming also failed", error=str(fallback_error), exc_info=True)
+                raise
 
     async def close(self):
         """Close HTTP client."""

@@ -247,11 +247,27 @@ class AuditScorer:
         scores = []
         total_categories = len(self.AUDIT_CATEGORIES)
 
+        # Calculate scores sequentially (reverted from parallel due to issues)
         for idx, category in enumerate(self.AUDIT_CATEGORIES):
-            score_value, explanation, sub_scores = await self._calculate_category_score(
-                category, response, judge_platform_id, all_responses
-            )
-
+            try:
+                score_value, explanation, sub_scores = await self._calculate_category_score(
+                    category, response, judge_platform_id, all_responses
+                )
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.error(
+                    "audit_score.category_calculation_failed",
+                    category=category,
+                    platform_id=platform_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                # Use default score on error
+                score_value = 5
+                explanation = f"Error calculating score: {str(e)}"
+                sub_scores = None
+            
             # Include sub-scores for categories with detailed scoring
             has_sub_scores = category in [
                 "Hallucination Score",
@@ -287,8 +303,7 @@ class AuditScorer:
             
             # Emit streaming event for each calculated score
             if event_manager:
-                import asyncio
-                asyncio.create_task(event_manager.emit_event(
+                await event_manager.emit_event(
                     "audit_score",
                     platform_id=platform_id,
                     data={
@@ -299,13 +314,34 @@ class AuditScorer:
                         "explanation": explanation,
                         "sub_scores": sub_scores.model_dump() if sub_scores else None,
                         "accumulated_scores": [s.model_dump() for s in scores],
-                        "progress": int((idx + 1) / total_categories * 100),  # 0-100% for audit scoring
-                        "completed_count": idx + 1,
+                        "progress": int(len(scores) / total_categories * 100),  # 0-100% for audit scoring
+                        "completed_count": len(scores),
                         "total_count": total_categories,
                     },
-                ))
+                )
+        
+        # Ensure we have all scores - if not, log warning
+        if len(scores) < total_categories:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning(
+                "audit_score.incomplete_scores",
+                platform_id=platform_id,
+                expected=total_categories,
+                received=len(scores),
+            )
 
-        overall_score = round(sum(s.value for s in scores) / len(scores))
+        # Calculate overall score - handle empty scores case
+        if len(scores) > 0:
+            overall_score = round(sum(s.value for s in scores) / len(scores))
+        else:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.error(
+                "audit_score.no_scores_calculated",
+                platform_id=platform_id,
+            )
+            overall_score = 0
 
         # Emit completion event
         if event_manager:
