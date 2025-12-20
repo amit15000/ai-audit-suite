@@ -170,6 +170,40 @@ class SubmitComparisonRequest(BaseModel):
     judge: str = Field(default="openai", description="Platform ID to use as judge/evaluator")
 
 
+class ExternalFactCheckEvidence(BaseModel):
+    """Schema for evidence used in external fact checking."""
+
+    url: str = Field(..., description="URL of the evidence source")
+    title: str = Field(..., description="Title of the evidence source")
+    snippet: str = Field(..., description="Relevant snippet or quote from the source")
+    source_rank: int = Field(..., description="Rank of this source in search results")
+    domain: str = Field(..., description="Domain of the source")
+
+
+class ExternalFactCheckClaim(BaseModel):
+    """Schema for individual claim verification result."""
+
+    id: str = Field(..., description="Unique identifier for the claim")
+    claim: str = Field(..., description="The factual claim text")
+    claim_type: str = Field(..., description="Type of claim (date, number, entity, general)")
+    original_span: str = Field(..., description="Original text span from the response")
+    risk: str = Field(..., description="Risk level (low, medium, high)")
+    verdict: Literal["SUPPORTED", "REFUTED", "NOT_ENOUGH_INFO"] = Field(..., description="Verification verdict")
+    confidence: float = Field(..., ge=0, le=1, description="Confidence score (0-1)")
+    top_evidence: list[ExternalFactCheckEvidence] = Field(default_factory=list, description="Top evidence supporting the verdict")
+
+
+class ExternalFactCheckResult(BaseModel):
+    """Schema for external fact check aggregated result."""
+
+    sub_score_name: str = Field(default="External Fact Check", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=100, description="Sub-score value (0-100)")
+    coverage: float = Field(..., ge=0, le=1, description="Coverage metric (claims_with_evidence / total_claims)")
+    claims: list[ExternalFactCheckClaim] = Field(default_factory=list, description="List of verified claims")
+    sources_used: list[str] = Field(default_factory=list, description="List of source URLs used")
+    notes: list[str] = Field(default_factory=list, description="Additional notes or warnings")
+
+
 class HallucinationSubScore(BaseModel):
     """Schema for hallucination sub-score metrics."""
 
@@ -177,6 +211,7 @@ class HallucinationSubScore(BaseModel):
     fabricatedCitationsScore: int = Field(..., ge=0, le=10, description="Score for detecting fabricated citations (0-10)")
     contradictoryInfoScore: int = Field(..., ge=0, le=10, description="Score for identifying contradictory information (0-10)")
     multiLLMComparisonScore: int = Field(..., ge=0, le=10, description="Score for comparing against multiple LLMs (0-10)")
+    externalFactCheckScore: int = Field(default=50, ge=0, le=100, description="Score for external fact check verification (0-100)")
 
 
 class AccuracySubScore(BaseModel):

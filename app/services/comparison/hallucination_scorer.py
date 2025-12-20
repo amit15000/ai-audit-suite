@@ -10,6 +10,7 @@ from app.services.comparison.hallucination import (
     ContradictoryInfoScorer,
     MultiLLMComparisonScorer,
 )
+from app.services.comparison.hallucination.external_fact_check import ExternalFactCheckScorer
 
 
 class HallucinationScorer:
@@ -29,6 +30,8 @@ class HallucinationScorer:
         )
         self.contradictory_info_scorer = ContradictoryInfoScorer(self.ai_service)
         self.multi_llm_comparison_scorer = MultiLLMComparisonScorer()
+        # External fact check scorer will be initialized lazily with judge_platform_id
+        self._external_fact_check_scorer: ExternalFactCheckScorer | None = None
 
     async def calculate_sub_scores(
         self,
@@ -70,11 +73,36 @@ class HallucinationScorer:
             response, all_responses, use_embeddings=use_embeddings
         )
         
+        # Calculate external fact check sub-score
+        # Initialize scorer if needed (requires judge_platform_id)
+        external_fact_check_score = 50  # Default neutral score
+        try:
+            if self._external_fact_check_scorer is None:
+                self._external_fact_check_scorer = ExternalFactCheckScorer(
+                    self.ai_service,
+                    judge_platform_id,
+                )
+            
+            external_fact_check_result = await self._external_fact_check_scorer.calculate_sub_score(
+                response
+            )
+            external_fact_check_score = external_fact_check_result.score
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning(
+                "external_fact_check_calculation_failed",
+                error=str(e),
+                exc_info=True,
+            )
+            # Use default score on error
+        
         return HallucinationSubScore(
             factCheckingScore=fact_checking_score,
             fabricatedCitationsScore=fabricated_citations_score,
             contradictoryInfoScore=contradictory_info_score,
             multiLLMComparisonScore=multi_llm_comparison_score,
+            externalFactCheckScore=external_fact_check_score,
         )
 
     # Legacy method names for backward compatibility

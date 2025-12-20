@@ -246,16 +246,50 @@ class AuditScorer:
         """
         scores = []
         total_categories = len(self.AUDIT_CATEGORIES)
+        import structlog
+        import asyncio
+        logger = structlog.get_logger(__name__)
 
-        # Calculate scores sequentially (reverted from parallel due to issues)
+        # Calculate scores sequentially with timeout protection
+        # Add timeout to prevent hanging on slow API calls (30 seconds per score)
+        SCORE_CALCULATION_TIMEOUT = 30.0
+        
         for idx, category in enumerate(self.AUDIT_CATEGORIES):
             try:
-                score_value, explanation, sub_scores = await self._calculate_category_score(
-                    category, response, judge_platform_id, all_responses
+                logger.info(
+                    "audit_score.calculating",
+                    category=category,
+                    platform_id=platform_id,
+                    progress=f"{idx + 1}/{total_categories}",
                 )
+                
+                # Add timeout to prevent hanging
+                score_value, explanation, sub_scores = await asyncio.wait_for(
+                    self._calculate_category_score(
+                        category, response, judge_platform_id, all_responses
+                    ),
+                    timeout=SCORE_CALCULATION_TIMEOUT,
+                )
+                
+                logger.info(
+                    "audit_score.calculated",
+                    category=category,
+                    platform_id=platform_id,
+                    score=score_value,
+                    progress=f"{idx + 1}/{total_categories}",
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "audit_score.category_calculation_timeout",
+                    category=category,
+                    platform_id=platform_id,
+                    timeout=SCORE_CALCULATION_TIMEOUT,
+                )
+                # Use default score on timeout
+                score_value = 5
+                explanation = f"Score calculation timed out after {SCORE_CALCULATION_TIMEOUT}s"
+                sub_scores = None
             except Exception as e:
-                import structlog
-                logger = structlog.get_logger(__name__)
                 logger.error(
                     "audit_score.category_calculation_failed",
                     category=category,
@@ -263,7 +297,7 @@ class AuditScorer:
                     error=str(e),
                     exc_info=True,
                 )
-                # Use default score on error
+                # Use default score on error - ensure loop continues
                 score_value = 5
                 explanation = f"Error calculating score: {str(e)}"
                 sub_scores = None
@@ -303,33 +337,91 @@ class AuditScorer:
             
             # Emit streaming event for each calculated score
             if event_manager:
-                await event_manager.emit_event(
-                    "audit_score",
-                    platform_id=platform_id,
-                    data={
-                        "score_name": category,
-                        "score_value": score_value,
-                        "max_value": 10,
-                        "category": self.CATEGORY_MAP.get(category, "General"),
-                        "explanation": explanation,
-                        "sub_scores": sub_scores.model_dump() if sub_scores else None,
-                        "accumulated_scores": [s.model_dump() for s in scores],
-                        "progress": int(len(scores) / total_categories * 100),  # 0-100% for audit scoring
-                        "completed_count": len(scores),
-                        "total_count": total_categories,
-                    },
-                )
+                try:
+                    await event_manager.emit_event(
+                        "audit_score",
+                        platform_id=platform_id,
+                        data={
+                            "score_name": category,
+                            "score_value": score_value,
+                            "max_value": 10,
+                            "category": self.CATEGORY_MAP.get(category, "General"),
+                            "explanation": explanation,
+                            "sub_scores": sub_scores.model_dump() if sub_scores else None,
+                            "accumulated_scores": [s.model_dump() for s in scores],
+                            "progress": int(len(scores) / total_categories * 100),  # 0-100% for audit scoring
+                            "completed_count": len(scores),
+                            "total_count": total_categories,
+                        },
+                    )
+                    # Yield control to allow event to be sent and prevent blocking
+                    await asyncio.sleep(0)
+                except Exception as e:
+                    logger.warning(
+                        "audit_score.event_emit_failed",
+                        category=category,
+                        platform_id=platform_id,
+                        error=str(e),
+                    )
+                    # Continue even if event emission fails
         
-        # Ensure we have all scores - if not, log warning
+        # Ensure we have all scores - create default scores for any missing ones
         if len(scores) < total_categories:
-            import structlog
-            logger = structlog.get_logger(__name__)
             logger.warning(
                 "audit_score.incomplete_scores",
                 platform_id=platform_id,
                 expected=total_categories,
                 received=len(scores),
             )
+            
+            # Create default scores for missing categories
+            calculated_categories = {score.name for score in scores}
+            for category in self.AUDIT_CATEGORIES:
+                if category not in calculated_categories:
+                    logger.warning(
+                        "audit_score.creating_default_score",
+                        category=category,
+                        platform_id=platform_id,
+                    )
+                    default_score = AuditScore(
+                        name=category,
+                        value=5,
+                        maxValue=10,
+                        category=self.CATEGORY_MAP.get(category, "General"),
+                        explanation=f"Score calculation was skipped or failed for {category}",
+                        subScores=None,
+                    )
+                    scores.append(default_score)
+                    
+                    # Emit event for default score
+                    if event_manager:
+                        try:
+                            await event_manager.emit_event(
+                                "audit_score",
+                                platform_id=platform_id,
+                                data={
+                                    "score_name": category,
+                                    "score_value": 5,
+                                    "max_value": 10,
+                                    "category": self.CATEGORY_MAP.get(category, "General"),
+                                    "explanation": f"Score calculation was skipped or failed for {category}",
+                                    "sub_scores": None,
+                                    "accumulated_scores": [s.model_dump() for s in scores],
+                                    "progress": int(len(scores) / total_categories * 100),
+                                    "completed_count": len(scores),
+                                    "total_count": total_categories,
+                                },
+                            )
+                            await asyncio.sleep(0)
+                        except Exception as e:
+                            logger.warning(
+                                "audit_score.default_score_event_failed",
+                                category=category,
+                                error=str(e),
+                            )
+            
+            # Sort scores by category order to maintain consistency
+            scores.sort(key=lambda s: self.AUDIT_CATEGORIES.index(s.name) if s.name in self.AUDIT_CATEGORIES else 999)
 
         # Calculate overall score - handle empty scores case
         if len(scores) > 0:

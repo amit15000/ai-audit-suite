@@ -27,4 +27,6 @@ anthropic>=0.7.7
 email-validator>=2.0.0
 numpy>=1.24.0
 supabase>=2.0.0
+trafilatura>=1.6.0
+serpapi>=0.1.5
 
