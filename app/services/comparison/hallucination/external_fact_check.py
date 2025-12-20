@@ -395,6 +395,95 @@ class EvidenceRetriever:
         return False
 
 
+class ClaimEnricher:
+    """Enriches claims with context from the full response."""
+
+    async def enrich_claims(self, claims: list[Claim], full_response: str) -> list[Claim]:
+        """Enrich claims with context from the full response.
+        
+        Args:
+            claims: List of extracted claims
+            full_response: Original full response text
+            
+        Returns:
+            List of enriched claims with context
+        """
+        if not claims:
+            return claims
+        
+        system_prompt = """You are an expert at enriching factual claims with context. Given a list of claims and the full response text, modify each claim to include necessary context so it can be understood independently.
+
+Rules:
+1. If a claim uses pronouns (it, the city, this, etc.), replace them with the actual entity from context
+2. If a claim is vague, add specific details from the response
+3. Keep the core factual content of each claim
+4. Make claims self-contained and clear
+
+Return ONLY valid JSON array with the same structure:
+[
+    {
+        "id": "c1",
+        "claim": "enriched claim with context",
+        "original_span": "original span"
+    }
+]"""
+
+        # Build claims list for prompt
+        claims_text = "\n".join([f"{claim.id}: {claim.claim}" for claim in claims])
+        
+        prompt = f"""Given the following claims extracted from a response, enrich them with context from the full response so they are self-contained and clear.
+
+Full Response:
+{full_response}
+
+Extracted Claims:
+{claims_text}
+
+For each claim:
+- Replace pronouns (it, the city, this, etc.) with actual entities from the response
+- Add necessary context to make the claim clear and verifiable
+- Keep the core factual content
+
+Return ONLY the JSON array with enriched claims, maintaining the same IDs."""
+
+        try:
+            response_text = await _call_openai(prompt, system_prompt=system_prompt)
+            
+            # Extract JSON array
+            json_match = re.search(r'\[.*?\]', response_text, re.DOTALL)
+            if json_match:
+                enriched_data = json.loads(json_match.group(0))
+                
+                # Create mapping of enriched claims
+                enriched_map = {item.get("id"): item.get("claim", "") for item in enriched_data}
+                
+                # Update claims with enriched versions
+                enriched_claims = []
+                for claim in claims:
+                    enriched_claim_text = enriched_map.get(claim.id, claim.claim)
+                    enriched_claims.append(Claim(
+                        id=claim.id,
+                        claim=enriched_claim_text,
+                        original_span=claim.original_span,
+                    ))
+                    
+                    if enriched_claim_text != claim.claim:
+                        logger.info(
+                            "claim_enriched",
+                            claim_id=claim.id,
+                            original_claim=claim.claim,
+                            enriched_claim=enriched_claim_text,
+                        )
+                
+                return enriched_claims
+        except Exception as e:
+            logger.warning("claim_enrichment_failed", error=str(e))
+            # Return original claims if enrichment fails
+            return claims
+        
+        return claims
+
+
 class LLMFactChecker:
     """Verifies claims using OpenAI with web knowledge."""
 
@@ -519,6 +608,7 @@ class ExternalFactCheckScorer:
         self.claim_extractor = ClaimExtractor(
             use_llm=settings.claim_extraction_use_llm,
         )
+        self.claim_enricher = ClaimEnricher()
         self.fact_checker = LLMFactChecker(
             timeout=settings.verification_timeout,
         )
@@ -566,8 +656,13 @@ class ExternalFactCheckScorer:
         
         logger.info("claims_extraction_complete", total_claims=len(claims))
         
-        # Step 2: Verify claims using OpenAI (with concurrency control)
-        logger.info("starting_claim_verification", total_claims=len(claims))
+        # Step 2: Enrich claims with context from full response
+        logger.info("starting_claim_enrichment", total_claims=len(claims))
+        enriched_claims = await self.claim_enricher.enrich_claims(claims, response)
+        logger.info("claims_enrichment_complete", total_claims=len(enriched_claims))
+        
+        # Step 3: Verify enriched claims using OpenAI (with concurrency control)
+        logger.info("starting_claim_verification", total_claims=len(enriched_claims))
         semaphore_verify = asyncio.Semaphore(3)  # Max 3 concurrent verifications
         
         async def verify_claim_safe(claim: Claim) -> tuple[Claim, dict[str, Any]]:
@@ -577,13 +672,14 @@ class ExternalFactCheckScorer:
                 return (claim, verification)
         
         verification_results = await asyncio.gather(
-            *[verify_claim_safe(claim) for claim in claims],
+            *[verify_claim_safe(claim) for claim in enriched_claims],
             return_exceptions=True,
         )
         
         logger.info("claim_verification_complete", total_verifications=len(verification_results))
         
         # Step 4: Process results and compute score
+        # Use original claims for display, but enriched claims were verified
         verified_claims = []
         true_count = 0
         false_count = 0
@@ -659,7 +755,7 @@ class ExternalFactCheckScorer:
         
         # Step 5: Compute score (0-100)
         # Simple scoring: percentage of claims that are TRUE
-        total_claims = len(claims)
+        total_claims = len(enriched_claims)
         if total_claims == 0:
             score = 50  # Neutral
         else:
@@ -709,7 +805,7 @@ class ExternalFactCheckScorer:
                         False
                     ),
                 }
-                for claim in claims
+                for claim in enriched_claims
             ],
         )
         
