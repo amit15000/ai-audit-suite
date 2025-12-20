@@ -511,13 +511,14 @@ CRITICAL RULES:
 2. Mark as FALSE if the claim is refuted, contradicted, or insufficient evidence
 3. Be conservative - when in doubt, mark as FALSE
 4. Provide clear explanation of your reasoning
-5. List the domains/websites you would use to verify this claim (e.g., wikipedia.org, nytimes.com, etc.)
+5. List the SPECIFIC PAGE URLs where this information can be found (e.g., https://en.wikipedia.org/wiki/New_York_City, https://www.nytimes.com/article/..., etc.)
+6. Provide actual clickable URLs, not just domain names
 
 Return ONLY valid JSON:
 {
     "is_true": true|false,
     "explanation": "Brief explanation of your reasoning and how you would verify this",
-    "sources_used": ["domain1.com", "domain2.com"]
+    "sources_used": ["https://en.wikipedia.org/wiki/SpecificPage", "https://www.nytimes.com/2020/..."]
 }"""
 
         prompt = f"""Verify the following factual claim using your web knowledge.
@@ -531,9 +532,12 @@ Analyze whether the claim is:
 Provide:
 1. Your verdict (is_true: true or false)
 2. Explanation of your reasoning
-3. List of domains/websites you would use to verify this claim (e.g., wikipedia.org, bbc.com, nytimes.com, etc.)
+3. List of SPECIFIC PAGE URLs where this information can be verified (e.g., https://en.wikipedia.org/wiki/New_York_City, https://www.census.gov/data/..., https://www.nytimes.com/2020/...)
+   - Provide full URLs with paths, not just domains
+   - Use actual URLs where this specific information would be found
+   - Make URLs clickable and specific to the claim
 
-Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (array of domain names)."""
+Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (array of full URLs)."""
 
         try:
             response = await asyncio.wait_for(
@@ -554,17 +558,19 @@ Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (ar
                     explanation = result.get("explanation", "")
                     sources_used = result.get("sources_used", [])
                     
-                    # Validate sources_used are domains (strings)
+                    # Validate sources_used are URLs (strings)
                     valid_sources = []
                     if isinstance(sources_used, list):
                         for source in sources_used:
                             if isinstance(source, str) and source.strip():
-                                # Clean domain (remove http://, https://, www.)
-                                domain = source.strip().lower()
-                                domain = domain.replace("http://", "").replace("https://", "").replace("www.", "")
-                                domain = domain.split("/")[0]  # Remove path
-                                if domain:
-                                    valid_sources.append(domain)
+                                # Ensure it's a valid URL
+                                url = source.strip()
+                                # Add https:// if missing
+                                if not url.startswith(("http://", "https://")):
+                                    url = "https://" + url
+                                # Validate it looks like a URL
+                                if "." in url and ("http://" in url or "https://" in url):
+                                    valid_sources.append(url)
                     
                     logger.info(
                         "claim_verification_complete",
@@ -722,18 +728,40 @@ class ExternalFactCheckScorer:
             else:
                 false_count += 1
             
-            # Convert sources to schema format (domains from OpenAI)
+            # Convert sources to schema format (URLs from OpenAI)
             from app.domain.schemas import ExternalFactCheckEvidence
-            evidence_schema = [
-                ExternalFactCheckEvidence(
-                    url=f"https://{domain}",  # Construct URL from domain
-                    title=domain,
+            from urllib.parse import urlparse
+            
+            evidence_schema = []
+            for idx, source_url in enumerate(sources_used):
+                # Parse URL to get domain
+                try:
+                    parsed = urlparse(source_url)
+                    domain = parsed.netloc or parsed.path.split("/")[0] if parsed.path else ""
+                    # Remove www. prefix
+                    if domain.startswith("www."):
+                        domain = domain[4:]
+                except:
+                    domain = source_url.split("/")[0] if "/" in source_url else source_url
+                
+                # Extract page title from URL or use domain
+                page_title = domain
+                if "/" in source_url:
+                    # Try to extract meaningful page name from URL
+                    path_parts = [p for p in source_url.split("/") if p and p not in ["http:", "https:", ""]]
+                    if path_parts:
+                        # Use last meaningful part as title hint
+                        last_part = path_parts[-1].replace("-", " ").replace("_", " ").title()
+                        if len(last_part) > 3:
+                            page_title = f"{domain} - {last_part}"
+                
+                evidence_schema.append(ExternalFactCheckEvidence(
+                    url=source_url,  # Full URL
+                    title=page_title,
                     snippet=explanation[:200] if explanation else "",
                     source_rank=idx + 1,
                     domain=domain,
-                )
-                for idx, domain in enumerate(sources_used)
-            ]
+                ))
             
             # Store explanation in notes (since schema doesn't have explanation field)
             claim_notes = [explanation] if explanation else []

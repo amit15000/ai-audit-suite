@@ -49,8 +49,11 @@ openai>=1.0.0
 google-generativeai>=0.3.0
 anthropic>=0.7.7
 
-# External Fact Check Feature Dependencies
-duckduckgo-search>=6.0.0  # Web search provider (free, no API key required) - recommended, no C compilation needed
-trafilatura>=1.6.0  # Text extraction from web pages (optional but recommended)
-# Note: If duckduckgo-search fails to install, you can use ddgs>=1.0.0 as alternative, but it requires C compilation
+# # External Fact Check Feature Dependencies
+# duckduckgo-search>=6.0.0  # Web search provider (free, no API key required) - recommended, no C compilation needed
+# trafilatura>=1.6.0  # Text extraction from web pages (optional but recommended)
+# # Note: If duckduckgo-search fails to install, you can use ddgs>=1.0.0 as alternative, but it requires C compilation
+
+# Document Generation
+python-docx>=1.1.0  # For generating .docx reports
 
