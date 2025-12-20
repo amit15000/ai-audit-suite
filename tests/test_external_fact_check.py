@@ -16,8 +16,8 @@ from app.services.comparison.hallucination.external_fact_check import (
     EvidenceRetriever,
     EvidenceTextFetcher,
     ExternalFactCheckScorer,
+    _call_openai,
 )
-from app.services.llm.ai_platform_service import AIPlatformService
 
 
 class TestClaimExtractor:
@@ -80,39 +80,39 @@ class TestClaimExtractor:
 
     @pytest.mark.asyncio
     async def test_extract_claims_llm_mocked(self):
-        """Test LLM-based claim extraction with mocked AI service."""
-        ai_service = AsyncMock(spec=AIPlatformService)
-        ai_service.get_response = AsyncMock(return_value=json.dumps([
-            {
-                "id": "c1",
-                "claim": "The population is 8.5 million",
-                "claim_type": "number",
-                "original_span": "The population is 8.5 million",
-                "risk": "high"
-            }
-        ]))
-        
-        extractor = ClaimExtractor(use_llm=True, ai_service=ai_service)
-        
-        response = "The population is 8.5 million."
-        claims = await extractor._extract_claims_llm(response, max_claims=10)
-        
-        assert len(claims) > 0
-        assert claims[0].id == "c1"
+        """Test LLM-based claim extraction with mocked OpenAI."""
+        with patch("app.services.comparison.hallucination.external_fact_check._call_openai") as mock_call:
+            mock_call.return_value = json.dumps([
+                {
+                    "id": "c1",
+                    "claim": "The population is 8.5 million",
+                    "claim_type": "number",
+                    "original_span": "The population is 8.5 million",
+                    "risk": "high"
+                }
+            ])
+            
+            extractor = ClaimExtractor(use_llm=True)
+            
+            response = "The population is 8.5 million."
+            claims = await extractor._extract_claims_llm(response, max_claims=10)
+            
+            assert len(claims) > 0
+            assert claims[0].id == "c1"
 
     @pytest.mark.asyncio
     async def test_extract_claims_llm_fallback(self):
         """Test that LLM extraction falls back to rule-based on error."""
-        ai_service = AsyncMock(spec=AIPlatformService)
-        ai_service.get_response = AsyncMock(side_effect=Exception("API error"))
-        
-        extractor = ClaimExtractor(use_llm=True, ai_service=ai_service)
-        
-        response = "The population is 8.5 million. In 2020, growth occurred."
-        claims = await extractor.extract_claims(response, max_claims=10)
-        
-        # Should fall back to rule-based and still extract claims
-        assert len(claims) >= 0  # May or may not extract depending on patterns
+        with patch("app.services.comparison.hallucination.external_fact_check._call_openai") as mock_call:
+            mock_call.side_effect = Exception("API error")
+            
+            extractor = ClaimExtractor(use_llm=True)
+            
+            response = "The population is 8.5 million. In 2020, growth occurred."
+            claims = await extractor.extract_claims(response, max_claims=10)
+            
+            # Should fall back to rule-based and still extract claims
+            assert len(claims) >= 0  # May or may not extract depending on patterns
 
 
 class TestEvidenceRetriever:
@@ -281,18 +281,14 @@ class TestClaimVerifier:
     @pytest.mark.asyncio
     async def test_verify_claim_supported(self):
         """Test claim verification with SUPPORTED verdict."""
-        ai_service = AsyncMock(spec=AIPlatformService)
-        ai_service.get_response = AsyncMock(return_value=json.dumps({
-            "verdict": "SUPPORTED",
-            "confidence": 0.9,
-            "explanation": "The evidence supports the claim"
-        }))
-        
-        verifier = ClaimVerifier(
-            ai_service=ai_service,
-            judge_platform_id="openai",
-            timeout=30,
-        )
+        with patch("app.services.comparison.hallucination.external_fact_check._call_openai") as mock_call:
+            mock_call.return_value = json.dumps({
+                "verdict": "SUPPORTED",
+                "confidence": 0.9,
+                "explanation": "The evidence supports the claim"
+            })
+            
+            verifier = ClaimVerifier(timeout=30)
         
         claim = Claim(
             id="c1",
@@ -302,30 +298,25 @@ class TestClaimVerifier:
             risk="high",
         )
         
-        evidence = Evidence(
-            url="https://example.com/article",
-            title="Test Article",
-            snippet="The population of the city is 8.5 million according to recent data",
-            source_rank=1,
-            domain="example.com",
-        )
-        
-        text_fetcher = EvidenceTextFetcher()
-        
-        result = await verifier.verify_claim(claim, [evidence], text_fetcher)
-        
-        assert result["verdict"] == "SUPPORTED"
-        assert result["confidence"] > 0.0
+            evidence = Evidence(
+                url="https://example.com/article",
+                title="Test Article",
+                snippet="The population of the city is 8.5 million according to recent data",
+                source_rank=1,
+                domain="example.com",
+            )
+            
+            text_fetcher = EvidenceTextFetcher()
+            
+            result = await verifier.verify_claim(claim, [evidence], text_fetcher)
+            
+            assert result["verdict"] == "SUPPORTED"
+            assert result["confidence"] > 0.0
 
     @pytest.mark.asyncio
     async def test_verify_claim_no_evidence(self):
         """Test verification when no evidence is provided."""
-        ai_service = AsyncMock(spec=AIPlatformService)
-        verifier = ClaimVerifier(
-            ai_service=ai_service,
-            judge_platform_id="openai",
-            timeout=30,
-        )
+        verifier = ClaimVerifier(timeout=30)
         
         claim = Claim(
             id="c1",
@@ -356,8 +347,7 @@ class TestExternalFactCheckScorer:
             settings.external_fact_check = ExternalFactCheckSettings(enabled=False)
             mock_settings.return_value = settings
             
-            ai_service = AsyncMock(spec=AIPlatformService)
-            scorer = ExternalFactCheckScorer(ai_service, "openai")
+            scorer = ExternalFactCheckScorer()
             
             result = await scorer.calculate_sub_score("Test response")
             
@@ -375,8 +365,7 @@ class TestExternalFactCheckScorer:
             settings.external_fact_check = ExternalFactCheckSettings(enabled=True)
             mock_settings.return_value = settings
             
-            ai_service = AsyncMock(spec=AIPlatformService)
-            scorer = ExternalFactCheckScorer(ai_service, "openai")
+            scorer = ExternalFactCheckScorer()
             
             # Mock claim extractor to return no claims
             with patch.object(scorer.claim_extractor, "extract_claims", return_value=[]):
@@ -399,14 +388,14 @@ class TestExternalFactCheckScorer:
             )
             mock_settings.return_value = settings
             
-            ai_service = AsyncMock(spec=AIPlatformService)
-            ai_service.get_response = AsyncMock(return_value=json.dumps({
-                "verdict": "SUPPORTED",
-                "confidence": 0.8,
-                "explanation": "Evidence supports"
-            }))
-            
-            scorer = ExternalFactCheckScorer(ai_service, "openai")
+            with patch("app.services.comparison.hallucination.external_fact_check._call_openai") as mock_call:
+                mock_call.return_value = json.dumps({
+                    "verdict": "SUPPORTED",
+                    "confidence": 0.8,
+                    "explanation": "Evidence supports"
+                })
+                
+                scorer = ExternalFactCheckScorer()
             
             # Mock all components
             test_claim = Claim(
@@ -437,7 +426,7 @@ class TestExternalFactCheckScorer:
 
     def test_calculate_score_supported_claims(self):
         """Test score calculation with supported claims."""
-        scorer = ExternalFactCheckScorer(AsyncMock(), "openai")
+        scorer = ExternalFactCheckScorer()
         
         claims = [
             ExternalFactCheckClaim(
@@ -469,7 +458,7 @@ class TestExternalFactCheckScorer:
 
     def test_calculate_score_refuted_claims(self):
         """Test score calculation with refuted claims."""
-        scorer = ExternalFactCheckScorer(AsyncMock(), "openai")
+        scorer = ExternalFactCheckScorer()
         
         claims = [
             ExternalFactCheckClaim(
@@ -491,7 +480,7 @@ class TestExternalFactCheckScorer:
 
     def test_calculate_score_mixed_verdicts(self):
         """Test score calculation with mixed verdicts."""
-        scorer = ExternalFactCheckScorer(AsyncMock(), "openai")
+        scorer = ExternalFactCheckScorer()
         
         claims = [
             ExternalFactCheckClaim(
@@ -554,14 +543,14 @@ class TestExternalFactCheckIntegration:
             mock_settings.return_value = settings
             
             # Mock AI service for verification
-            ai_service = AsyncMock(spec=AIPlatformService)
-            ai_service.get_response = AsyncMock(return_value=json.dumps({
-                "verdict": "SUPPORTED",
-                "confidence": 0.85,
-                "explanation": "The evidence clearly supports this claim"
-            }))
-            
-            scorer = ExternalFactCheckScorer(ai_service, "openai")
+            with patch("app.services.comparison.hallucination.external_fact_check._call_openai") as mock_call:
+                mock_call.return_value = json.dumps({
+                    "verdict": "SUPPORTED",
+                    "confidence": 0.85,
+                    "explanation": "The evidence clearly supports this claim"
+                })
+                
+                scorer = ExternalFactCheckScorer()
             
             # Mock SerpAPI response
             serpapi_response = {

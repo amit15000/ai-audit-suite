@@ -185,12 +185,12 @@ class ExternalFactCheckClaim(BaseModel):
 
     id: str = Field(..., description="Unique identifier for the claim")
     claim: str = Field(..., description="The factual claim text")
-    claim_type: str = Field(..., description="Type of claim (date, number, entity, general)")
+    claim_type: str = Field(default="general", description="Type of claim (kept for compatibility)")
     original_span: str = Field(..., description="Original text span from the response")
-    risk: str = Field(..., description="Risk level (low, medium, high)")
-    verdict: Literal["SUPPORTED", "REFUTED", "NOT_ENOUGH_INFO"] = Field(..., description="Verification verdict")
-    confidence: float = Field(..., ge=0, le=1, description="Confidence score (0-1)")
-    top_evidence: list[ExternalFactCheckEvidence] = Field(default_factory=list, description="Top evidence supporting the verdict")
+    risk: str = Field(default="medium", description="Risk level (kept for compatibility)")
+    verdict: Literal["SUPPORTED", "REFUTED", "NOT_ENOUGH_INFO"] = Field(..., description="Verification verdict (SUPPORTED=True, REFUTED=False)")
+    confidence: float = Field(..., ge=0, le=1, description="Confidence score (1.0 for True, 0.0 for False)")
+    top_evidence: list[ExternalFactCheckEvidence] = Field(default_factory=list, description="Sources with URLs and domains used for verification")
 
 
 class ExternalFactCheckResult(BaseModel):

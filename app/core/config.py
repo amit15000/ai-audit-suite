@@ -139,17 +139,18 @@ class ExternalFactCheckSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXTERNAL_FACT_CHECK_")
 
     enabled: bool = True
-    serpapi_api_key: str | None = None
+    search_provider: Literal["duckduckgo", "serpapi"] = "duckduckgo"  # Default to DuckDuckGo (free, no API key)
+    serpapi_api_key: str | None = None  # Only needed if search_provider="serpapi"
     top_k_results: int = 5
-    claim_extraction_use_llm: bool = False
+    claim_extraction_use_llm: bool = True  # Default to LLM, fallback to rule-based
     verification_timeout: int = 30
     search_timeout: int = 10
     max_claims_per_response: int = 20
 
     @model_validator(mode="after")
     def load_api_key_from_env(self) -> "ExternalFactCheckSettings":
-        """Load SerpAPI key from environment variable if set."""
-        if not self.serpapi_api_key:
+        """Load SerpAPI key from environment variable if set (only needed for serpapi provider)."""
+        if not self.serpapi_api_key and self.search_provider == "serpapi":
             self.serpapi_api_key = os.getenv("SERPAPI_API_KEY") or os.getenv("EXTERNAL_FACT_CHECK_SERPAPI_API_KEY")
         return self
 

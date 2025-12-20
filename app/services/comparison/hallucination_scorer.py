@@ -74,14 +74,10 @@ class HallucinationScorer:
         )
         
         # Calculate external fact check sub-score
-        # Initialize scorer if needed (requires judge_platform_id)
         external_fact_check_score = 50  # Default neutral score
         try:
             if self._external_fact_check_scorer is None:
-                self._external_fact_check_scorer = ExternalFactCheckScorer(
-                    self.ai_service,
-                    judge_platform_id,
-                )
+                self._external_fact_check_scorer = ExternalFactCheckScorer()
             
             external_fact_check_result = await self._external_fact_check_scorer.calculate_sub_score(
                 response
