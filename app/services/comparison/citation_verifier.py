@@ -16,10 +16,11 @@ logger = structlog.get_logger(__name__)
 class Citation:
     """Represents a citation found in text."""
     
-    url: str
+    url: str  # URL, DOI URL, or paper title/name for title-based citations
     text: str  # The text that mentions/cites this URL
     position: int  # Character position in original text
     context: str  # Surrounding text context
+    citation_type: str = "url"  # "url", "doi", "title", "paper_name"
 
 
 @dataclass
@@ -113,7 +114,8 @@ class CitationVerifier:
                     url=url,
                     text=link_text,
                     position=match.start(),
-                    context=text[max(0, match.start()-50):match.end()+50]
+                    context=text[max(0, match.start()-50):match.end()+50],
+                    citation_type="url"
                 ))
         
         # Pattern 3: DOI references
@@ -125,16 +127,80 @@ class CitationVerifier:
                 url=url,
                 text=f"DOI: {doi}",
                 position=match.start(),
-                context=text[max(0, match.start()-50):match.end()+50]
+                context=text[max(0, match.start()-50):match.end()+50],
+                citation_type="doi"
             ))
         
-        # Remove duplicates (same URL)
-        seen_urls = set()
+        # Pattern 4: Extract paper titles/names from text (quoted titles, "titled X", etc.)
+        # Look for patterns like: "titled 'Paper Title'", "paper 'Title'", "study 'Title'"
+        title_patterns = [
+            r'titled\s+["\']([^"\']{15,200})["\']',  # "titled 'Paper Title'"
+            r'paper\s+["\']([^"\']{15,200})["\']',  # "paper 'Title'"
+            r'study\s+["\']([^"\']{15,200})["\']',  # "study 'Title'"
+            r'article\s+["\']([^"\']{15,200})["\']',  # "article 'Title'"
+            r'research\s+["\']([^"\']{15,200})["\']',  # "research 'Title'"
+            r'["\']([A-Z][^"\']{20,150})["\']\s+(?:by|published|authored)',  # "'Title' by Author"
+        ]
+        
+        for pattern in title_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                title = match.group(1).strip()
+                # Filter out URLs and invalid titles
+                if (not title.startswith(('http://', 'https://', 'www.')) and 
+                    '://' not in title and
+                    len(title) > 15 and len(title) < 200):
+                    # Get context around the title
+                    start = max(0, match.start() - 100)
+                    end = min(len(text), match.end() + 100)
+                    context = text[start:end]
+                    
+                    citations.append(Citation(
+                        url=title,  # Use title as "url" for title-based citations
+                        text=title,
+                        position=match.start(),
+                        context=context,
+                        citation_type="title"
+                    ))
+        
+        # Pattern 5: Extract paper names from "paper X by Y" or "study X by Y" patterns
+        paper_name_patterns = [
+            r'(?:paper|study|article|research)\s+["\']?([A-Z][^"\']{20,150})["\']?\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+et\s+al\.?)?)',
+            r'["\']([A-Z][^"\']{20,150})["\']\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+et\s+al\.?)?)',
+        ]
+        
+        for pattern in paper_name_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                title = match.group(1).strip()
+                author = match.group(2).strip() if len(match.groups()) > 1 else ""
+                # Filter out URLs
+                if (not title.startswith(('http://', 'https://', 'www.')) and 
+                    '://' not in title and
+                    len(title) > 15 and len(title) < 200):
+                    start = max(0, match.start() - 100)
+                    end = min(len(text), match.end() + 100)
+                    context = text[start:end]
+                    
+                    citations.append(Citation(
+                        url=title,
+                        text=f"{title} by {author}" if author else title,
+                        position=match.start(),
+                        context=context,
+                        citation_type="paper_name"
+                    ))
+        
+        # Remove duplicates (same URL/title)
+        seen_citations = set()
         unique_citations = []
         for citation in citations:
-            normalized_url = self._normalize_url(citation.url)
-            if normalized_url not in seen_urls:
-                seen_urls.add(normalized_url)
+            # Normalize for comparison
+            if citation.citation_type in ["url", "doi"]:
+                normalized = self._normalize_url(citation.url)
+            else:
+                # For titles, use lowercase normalized title
+                normalized = citation.url.lower().strip()
+            
+            if normalized not in seen_citations:
+                seen_citations.add(normalized)
                 unique_citations.append(citation)
         
         return unique_citations
