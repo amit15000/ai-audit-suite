@@ -1,7 +1,12 @@
 """Service for calculating hallucination scores and sub-scores."""
 from __future__ import annotations
 
-from app.domain.schemas import HallucinationSubScore
+from app.domain.schemas import (
+    HallucinationSubScore,
+    FabricatedCitationsDetails,
+    ContradictoryInfoDetails,
+    ContradictoryInfoContradictionPair,
+)
 from app.services.comparison.citation_verifier import CitationVerifier
 from app.services.llm.ai_platform_service import AIPlatformService
 from app.services.comparison.hallucination import (
@@ -28,7 +33,7 @@ class HallucinationScorer:
         self.fabricated_citations_scorer = FabricatedCitationsScorer(
             self.citation_verifier, self.ai_service
         )
-        self.contradictory_info_scorer = ContradictoryInfoScorer(self.ai_service)
+        self.contradictory_info_scorer = ContradictoryInfoScorer()
         self.multi_llm_comparison_scorer = MultiLLMComparisonScorer()
         # External fact check scorer will be initialized lazily with judge_platform_id
         self._external_fact_check_scorer: ExternalFactCheckScorer | None = None
@@ -66,15 +71,17 @@ class HallucinationScorer:
         fabricated_citations_score = await self.fabricated_citations_scorer.calculate_score(
             response, judge_platform_id, use_llm=use_llm
         )
+        # Contradictory info requires LLM - always use LLM for this
         contradictory_info_score = await self.contradictory_info_scorer.calculate_score(
-            response, judge_platform_id, use_llm=use_llm
+            response, judge_platform_id, use_llm=True  # Always use LLM for contradictory info
         )
         multi_llm_comparison_score = await self.multi_llm_comparison_scorer.calculate_score(
             response, all_responses, use_embeddings=use_embeddings
         )
         
-        # Calculate external fact check sub-score
+        # Calculate external fact check sub-score with details
         external_fact_check_score = 50  # Default neutral score
+        external_fact_check_result = None
         try:
             if self._external_fact_check_scorer is None:
                 self._external_fact_check_scorer = ExternalFactCheckScorer()
@@ -93,12 +100,72 @@ class HallucinationScorer:
             )
             # Use default score on error
         
+        # Get fabricated citations details
+        fabricated_citations_details = None
+        try:
+            fabricated_citations_report = await self.fabricated_citations_scorer.get_detailed_verification_report(
+                response, judge_platform_id, use_llm=use_llm
+            )
+            fabricated_citations_details = FabricatedCitationsDetails(
+                sub_score_name="Fabricated Citations",
+                score=fabricated_citations_report["score"],
+                total_citations=fabricated_citations_report["total_citations"],
+                verified_count=fabricated_citations_report["verified_count"],
+                fabricated_count=fabricated_citations_report["fabricated_count"],
+                citations=fabricated_citations_report["citations"],
+            )
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning(
+                "fabricated_citations_details_failed",
+                error=str(e),
+                exc_info=True,
+            )
+        
+        # Get contradictory information details
+        contradictory_info_details = None
+        try:
+            contradictory_info_result = await self.contradictory_info_scorer.get_detailed_contradictions(
+                response, judge_platform_id, use_llm=True  # Always use LLM
+            )
+            
+            # Convert contradiction pairs to schema format
+            contradiction_pairs = []
+            for pair_data in contradictory_info_result.get("contradiction_pairs", []):
+                contradiction_pairs.append(ContradictoryInfoContradictionPair(
+                    statement_1=pair_data.get("statement_1", ""),
+                    statement_2=pair_data.get("statement_2", ""),
+                    type=pair_data.get("type", "factual"),
+                    severity=pair_data.get("severity", "medium"),
+                    semantic_reasoning=pair_data.get("semantic_reasoning", ""),
+                ))
+            
+            contradictory_info_details = ContradictoryInfoDetails(
+                sub_score_name="Contradictory Information",
+                score=contradictory_info_result["score"],
+                contradictions_found=contradictory_info_result["contradictions_found"],
+                contradiction_pairs=contradiction_pairs,
+                explanation=contradictory_info_result.get("explanation", ""),
+            )
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning(
+                "contradictory_info_details_failed",
+                error=str(e),
+                exc_info=True,
+            )
+        
         return HallucinationSubScore(
             factCheckingScore=fact_checking_score,
             fabricatedCitationsScore=fabricated_citations_score,
             contradictoryInfoScore=contradictory_info_score,
             multiLLMComparisonScore=multi_llm_comparison_score,
             externalFactCheckScore=external_fact_check_score,
+            externalFactCheckDetails=external_fact_check_result,
+            fabricatedCitationsDetails=fabricated_citations_details,
+            contradictoryInfoDetails=contradictory_info_details,
         )
 
     # Legacy method names for backward compatibility

@@ -204,6 +204,37 @@ class ExternalFactCheckResult(BaseModel):
     notes: list[str] = Field(default_factory=list, description="Additional notes or warnings")
 
 
+class ContradictoryInfoContradictionPair(BaseModel):
+    """Schema for a single contradiction pair."""
+
+    statement_1: str = Field(..., description="First contradictory statement")
+    statement_2: str = Field(..., description="Second contradictory statement")
+    type: str = Field(..., description="Type of contradiction (direct, factual, temporal, logical, causal, attributive)")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+    semantic_reasoning: str = Field(..., description="AI's explanation of why these statements are contradictory")
+
+
+class ContradictoryInfoDetails(BaseModel):
+    """Schema for contradictory information detailed results."""
+
+    sub_score_name: str = Field(default="Contradictory Information", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    contradictions_found: int = Field(..., ge=0, description="Number of contradictions detected")
+    contradiction_pairs: list[ContradictoryInfoContradictionPair] = Field(default_factory=list, description="List of contradiction pairs with statements and explanations")
+    explanation: str = Field(default="", description="Overall explanation of contradictions found")
+
+
+class FabricatedCitationsDetails(BaseModel):
+    """Schema for fabricated citations detailed results."""
+
+    sub_score_name: str = Field(default="Fabricated Citations", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    total_citations: int = Field(..., ge=0, description="Total number of citations found")
+    verified_count: int = Field(..., ge=0, description="Number of verified citations")
+    fabricated_count: int = Field(..., ge=0, description="Number of fabricated citations")
+    citations: list[dict] = Field(default_factory=list, description="List of citation verification details")
+
+
 class HallucinationSubScore(BaseModel):
     """Schema for hallucination sub-score metrics."""
 
@@ -212,6 +243,9 @@ class HallucinationSubScore(BaseModel):
     contradictoryInfoScore: int = Field(..., ge=0, le=10, description="Score for identifying contradictory information (0-10)")
     multiLLMComparisonScore: int = Field(..., ge=0, le=10, description="Score for comparing against multiple LLMs (0-10)")
     externalFactCheckScore: int = Field(default=50, ge=0, le=100, description="Score for external fact check verification (0-100)")
+    externalFactCheckDetails: ExternalFactCheckResult | None = Field(default=None, description="Detailed external fact check results")
+    fabricatedCitationsDetails: FabricatedCitationsDetails | None = Field(default=None, description="Detailed fabricated citations results")
+    contradictoryInfoDetails: ContradictoryInfoDetails | None = Field(default=None, description="Detailed contradictory information results")
 
 
 class AccuracySubScore(BaseModel):

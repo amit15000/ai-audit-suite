@@ -347,7 +347,7 @@ class AuditScorer:
                             "max_value": 10,
                             "category": self.CATEGORY_MAP.get(category, "General"),
                             "explanation": explanation,
-                            "sub_scores": sub_scores.model_dump() if sub_scores else None,
+                            "subScores": sub_scores.model_dump() if sub_scores else None,
                             "accumulated_scores": [s.model_dump() for s in scores],
                             "progress": int(len(scores) / total_categories * 100),  # 0-100% for audit scoring
                             "completed_count": len(scores),
@@ -405,7 +405,7 @@ class AuditScorer:
                                     "max_value": 10,
                                     "category": self.CATEGORY_MAP.get(category, "General"),
                                     "explanation": f"Score calculation was skipped or failed for {category}",
-                                    "sub_scores": None,
+                                    "subScores": None,
                                     "accumulated_scores": [s.model_dump() for s in scores],
                                     "progress": int(len(scores) / total_categories * 100),
                                     "completed_count": len(scores),
@@ -486,9 +486,11 @@ class AuditScorer:
         # Uses rule-based methods by default (fast, deterministic)
         # Set use_llm=True and use_embeddings=True for enhanced accuracy (slower, more expensive)
         if category == "Hallucination Score":
+            # Use LLM=True to enable contradictory info detection (requires LLM)
+            # Also enables LLM-enhanced scoring for other sub-scores
             sub_scores = await self.hallucination_scorer.calculate_sub_scores(
                 response, judge_platform_id, all_responses,
-                use_llm=False,  # Set to True for LLM-enhanced scoring
+                use_llm=True,  # Required for contradictory info detection
                 use_embeddings=False  # Set to True for semantic similarity comparison
             )
         elif category == "Factual Accuracy Score":
