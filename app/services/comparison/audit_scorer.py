@@ -233,6 +233,7 @@ class AuditScorer:
         judge_platform_id: str,
         all_responses: dict[str, str],
         event_manager: Optional["ComparisonEventManager"] = None,
+        original_prompt: str | None = None,
     ) -> AuditorDetailedScores:
         """Calculate all audit scores for a platform.
         
@@ -243,7 +244,11 @@ class AuditScorer:
             judge_platform_id: Judge platform ID
             all_responses: All platform responses for comparison
             event_manager: Optional event manager for streaming score updates
+            original_prompt: Original prompt that generated the response (for multi-LLM comparison)
         """
+        # Store prompt and platform_id for use in _calculate_category_score
+        self._current_prompt = original_prompt
+        self._current_platform_id = platform_id
         scores = []
         total_categories = len(self.AUDIT_CATEGORIES)
         import structlog
@@ -251,8 +256,10 @@ class AuditScorer:
         logger = structlog.get_logger(__name__)
 
         # Calculate scores sequentially with timeout protection
-        # Add timeout to prevent hanging on slow API calls (30 seconds per score)
-        SCORE_CALCULATION_TIMEOUT = 30.0
+        # Add timeout to prevent hanging on slow API calls
+        # Hallucination Score needs more time due to multiple LLM calls and detailed analysis
+        DEFAULT_SCORE_CALCULATION_TIMEOUT = 30.0
+        HALLUCINATION_SCORE_TIMEOUT = 120.0  # 2 minutes for detailed hallucination analysis
         
         for idx, category in enumerate(self.AUDIT_CATEGORIES):
             try:
@@ -263,12 +270,15 @@ class AuditScorer:
                     progress=f"{idx + 1}/{total_categories}",
                 )
                 
+                # Use longer timeout for Hallucination Score (needs multiple LLM calls)
+                timeout = HALLUCINATION_SCORE_TIMEOUT if category == "Hallucination Score" else DEFAULT_SCORE_CALCULATION_TIMEOUT
+                
                 # Add timeout to prevent hanging
                 score_value, explanation, sub_scores = await asyncio.wait_for(
                     self._calculate_category_score(
                         category, response, judge_platform_id, all_responses
                     ),
-                    timeout=SCORE_CALCULATION_TIMEOUT,
+                    timeout=timeout,
                 )
                 
                 logger.info(
@@ -279,16 +289,32 @@ class AuditScorer:
                     progress=f"{idx + 1}/{total_categories}",
                 )
             except asyncio.TimeoutError:
+                timeout_used = HALLUCINATION_SCORE_TIMEOUT if category == "Hallucination Score" else DEFAULT_SCORE_CALCULATION_TIMEOUT
                 logger.error(
                     "audit_score.category_calculation_timeout",
                     category=category,
                     platform_id=platform_id,
-                    timeout=SCORE_CALCULATION_TIMEOUT,
+                    timeout=timeout_used,
                 )
                 # Use default score on timeout
                 score_value = 5
-                explanation = f"Score calculation timed out after {SCORE_CALCULATION_TIMEOUT}s"
-                sub_scores = None
+                explanation = f"Score calculation timed out after {timeout_used}s"
+                # For Hallucination Score, try to return partial results with default values
+                if category == "Hallucination Score":
+                    from app.domain.schemas import HallucinationSubScore
+                    sub_scores = HallucinationSubScore(
+                        factCheckingScore=5,
+                        fabricatedCitationsScore=5,
+                        contradictoryInfoScore=5,
+                        multiLLMComparisonScore=5,
+                        externalFactCheckScore=50,
+                        externalFactCheckDetails=None,
+                        fabricatedCitationsDetails=None,
+                        contradictoryInfoDetails=None,
+                        multiLLMComparisonDetails=None,
+                    )
+                else:
+                    sub_scores = None
             except Exception as e:
                 logger.error(
                     "audit_score.category_calculation_failed",
@@ -324,6 +350,23 @@ class AuditScorer:
                 "Multi-judge AI Review",
                 "Explainability Score"
             ]
+            # For Hallucination Score, ensure all details are included even if None
+            # This allows UI to show all sub-scores and their details
+            if category == "Hallucination Score" and sub_scores is None:
+                # Create default HallucinationSubScore with all fields (even if None)
+                from app.domain.schemas import HallucinationSubScore
+                sub_scores = HallucinationSubScore(
+                    factCheckingScore=5,
+                    fabricatedCitationsScore=5,
+                    contradictoryInfoScore=5,
+                    multiLLMComparisonScore=5,
+                    externalFactCheckScore=50,
+                    externalFactCheckDetails=None,
+                    fabricatedCitationsDetails=None,
+                    contradictoryInfoDetails=None,
+                    multiLLMComparisonDetails=None,
+                )
+            
             score = AuditScore(
                 name=category,
                 value=score_value,
@@ -347,7 +390,7 @@ class AuditScorer:
                             "max_value": 10,
                             "category": self.CATEGORY_MAP.get(category, "General"),
                             "explanation": explanation,
-                            "subScores": sub_scores.model_dump() if sub_scores else None,
+                            "subScores": sub_scores.model_dump(exclude_none=False) if sub_scores else None,
                             "accumulated_scores": [s.model_dump() for s in scores],
                             "progress": int(len(scores) / total_categories * 100),  # 0-100% for audit scoring
                             "completed_count": len(scores),
@@ -488,10 +531,16 @@ class AuditScorer:
         if category == "Hallucination Score":
             # Use LLM=True to enable contradictory info detection (requires LLM)
             # Also enables LLM-enhanced scoring for other sub-scores
+            # Get original prompt and target platform from context if available
+            original_prompt = getattr(self, '_current_prompt', None)
+            target_platform_id = getattr(self, '_current_platform_id', None)
+            
             sub_scores = await self.hallucination_scorer.calculate_sub_scores(
                 response, judge_platform_id, all_responses,
                 use_llm=True,  # Required for contradictory info detection
-                use_embeddings=False  # Set to True for semantic similarity comparison
+                use_embeddings=False,  # Set to True for semantic similarity comparison
+                original_prompt=original_prompt,
+                target_platform_id=target_platform_id,
             )
         elif category == "Factual Accuracy Score":
             sub_scores = await self.accuracy_scorer.calculate_sub_scores(
@@ -519,20 +568,24 @@ class AuditScorer:
                 use_llm=False  # Set to True for LLM-enhanced scoring
             )
         elif category == "Bias & Fairness Score":
+            # Use LLM=True for comprehensive bias analysis (required for accurate detection)
             sub_scores = await self.bias_fairness_scorer.calculate_sub_scores(
                 response, judge_platform_id,
-                use_llm=False  # Set to True for LLM-enhanced scoring
+                use_llm=True  # Required for comprehensive bias analysis
             )
         elif category == "Safety Score":
+            # Uses LLM-based evaluation following OpenAI/Microsoft content moderation standards
             sub_scores = await self.safety_scorer.calculate_sub_scores(
                 response, judge_platform_id,
-                use_llm=False  # Set to True for LLM-enhanced scoring
+                use_llm=True  # Required for accurate safety detection
             )
         elif category == "Context-Adherence Score":
-            # Note: Context adherence may need prompt parameter
+            # Use LLM-based prompt parsing and response analysis for marketing teams
             sub_scores = await self.context_adherence_scorer.calculate_sub_scores(
-                response, prompt="", judge_platform_id=judge_platform_id,
-                use_llm=False  # Set to True for LLM-enhanced scoring
+                response,
+                prompt=original_prompt or "",
+                judge_platform_id=judge_platform_id,
+                use_llm=True  # LLM required for accurate prompt parsing and analysis
             )
         elif category == "Stability & Robustness Test":
             sub_scores = await self.stability_robustness_scorer.calculate_sub_scores(

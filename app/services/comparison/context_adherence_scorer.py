@@ -30,18 +30,18 @@ class ContextAdherenceScorer:
         self,
         response: str,
         prompt: str = "",
-        judge_platform_id: str = "",
-        use_llm: bool = False,
+        judge_platform_id: str = "openai",
+        use_llm: bool = True,
     ) -> ContextAdherenceSubScore:
         """Calculate the 5 context adherence sub-scores.
         
-        Uses pattern matching and prompt comparison to assess adherence.
+        Uses LLM-based prompt parsing and response analysis to assess adherence.
         
         Args:
             response: The response text to evaluate
             prompt: The original prompt/instructions (optional)
-            judge_platform_id: Platform ID for LLM judge (if use_llm=True)
-            use_llm: Whether to use LLM for enhanced evaluation (default: False)
+            judge_platform_id: Platform ID for LLM judge (default: "openai")
+            use_llm: Whether to use LLM for evaluation (default: True)
         
         Returns:
             ContextAdherenceSubScore with:
@@ -51,29 +51,48 @@ class ContextAdherenceScorer:
             - formatRules: Format rules adherence percentage (0-100)
             - brandVoice: Brand voice adherence percentage (0-100)
         """
-        # Calculate each sub-score
-        all_instructions = await self.all_instructions_scorer.calculate_score(
+        # Calculate each sub-score with prompt passed to all scorers
+        # Each scorer now returns (score, explanation) tuple
+        all_instructions_score, all_instructions_explanation = await self.all_instructions_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
-        tone_of_voice = await self.tone_of_voice_scorer.calculate_score(
-            response, judge_platform_id, use_llm=use_llm
-        )
-        length_constraints = await self.length_constraints_scorer.calculate_score(
+        tone_of_voice_result = await self.tone_of_voice_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
-        format_rules = await self.format_rules_scorer.calculate_score(
+        length_constraints_result = await self.length_constraints_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
-        brand_voice = await self.brand_voice_scorer.calculate_score(
-            response, judge_platform_id, use_llm=use_llm
+        format_rules_score, format_rules_explanation = await self.format_rules_scorer.calculate_score(
+            response, prompt, judge_platform_id, use_llm=use_llm
+        )
+        brand_voice_score, brand_voice_explanation = await self.brand_voice_scorer.calculate_score(
+            response, prompt, judge_platform_id, use_llm=use_llm
         )
         
+        # Handle tone and length which may return string or tuple
+        if isinstance(tone_of_voice_result, tuple):
+            tone_of_voice, tone_explanation = tone_of_voice_result
+        else:
+            tone_of_voice = tone_of_voice_result
+            tone_explanation = None
+        
+        if isinstance(length_constraints_result, tuple):
+            length_constraints, length_explanation = length_constraints_result
+        else:
+            length_constraints = length_constraints_result
+            length_explanation = None
+        
         return ContextAdherenceSubScore(
-            allInstructions=all_instructions,
+            allInstructions=all_instructions_score,
             toneOfVoice=tone_of_voice,
             lengthConstraints=length_constraints,
-            formatRules=format_rules,
-            brandVoice=brand_voice,
+            formatRules=format_rules_score,
+            brandVoice=brand_voice_score,
+            allInstructionsExplanation=all_instructions_explanation,
+            toneOfVoiceExplanation=tone_explanation,
+            lengthConstraintsExplanation=length_explanation,
+            formatRulesExplanation=format_rules_explanation,
+            brandVoiceExplanation=brand_voice_explanation,
         )
 
     # Legacy method names for backward compatibility
@@ -94,12 +113,13 @@ class ContextAdherenceScorer:
         Returns:
             All instructions adherence percentage (0-100)
         """
-        return await self.all_instructions_scorer.calculate_score(
+        score, _ = await self.all_instructions_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
+        return score
 
     async def calculate_tone_of_voice(
-        self, response: str, judge_platform_id: str, use_llm: bool = False
+        self, response: str, prompt: str = "", judge_platform_id: str = "openai", use_llm: bool = True
     ) -> str:
         """Calculate tone of voice (e.g., 'Polite', 'Professional', 'Casual').
         
@@ -108,15 +128,17 @@ class ContextAdherenceScorer:
         
         Args:
             response: The response text to evaluate
-            judge_platform_id: Platform ID for LLM judge (if use_llm=True)
-            use_llm: Whether to use LLM for enhanced evaluation (default: False)
+            prompt: The original prompt (optional)
+            judge_platform_id: Platform ID for LLM judge (default: "openai")
+            use_llm: Whether to use LLM for evaluation (default: True)
             
         Returns:
             Tone of voice string (e.g., 'Polite', 'Professional', 'Casual', 'Formal', 'Neutral')
         """
-        return await self.tone_of_voice_scorer.calculate_score(
-            response, judge_platform_id, use_llm=use_llm
+        tone, _ = await self.tone_of_voice_scorer.calculate_score(
+            response, prompt, judge_platform_id, use_llm=use_llm
         )
+        return tone
 
     async def calculate_length_constraints(
         self, response: str, prompt: str, judge_platform_id: str, use_llm: bool = False
@@ -135,9 +157,10 @@ class ContextAdherenceScorer:
         Returns:
             Length constraints string (e.g., 'Short', 'Medium', 'Long', 'Very Long')
         """
-        return await self.length_constraints_scorer.calculate_score(
+        length, _ = await self.length_constraints_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
+        return length
 
     async def calculate_format_rules(
         self, response: str, prompt: str, judge_platform_id: str, use_llm: bool = False
@@ -156,12 +179,13 @@ class ContextAdherenceScorer:
         Returns:
             Format rules adherence percentage (0-100)
         """
-        return await self.format_rules_scorer.calculate_score(
+        score, _ = await self.format_rules_scorer.calculate_score(
             response, prompt, judge_platform_id, use_llm=use_llm
         )
+        return score
 
     async def calculate_brand_voice(
-        self, response: str, judge_platform_id: str, use_llm: bool = False
+        self, response: str, prompt: str = "", judge_platform_id: str = "openai", use_llm: bool = True
     ) -> float:
         """Calculate brand voice adherence percentage (0-100).
         
@@ -170,13 +194,15 @@ class ContextAdherenceScorer:
         
         Args:
             response: The response text to evaluate
-            judge_platform_id: Platform ID for LLM judge (if use_llm=True)
-            use_llm: Whether to use LLM for enhanced evaluation (default: False)
+            prompt: The original prompt (optional, may contain brand voice guidelines)
+            judge_platform_id: Platform ID for LLM judge (default: "openai")
+            use_llm: Whether to use LLM for evaluation (default: True)
             
         Returns:
             Brand voice adherence percentage (0-100)
         """
-        return await self.brand_voice_scorer.calculate_score(
-            response, judge_platform_id, use_llm=use_llm
+        score, _ = await self.brand_voice_scorer.calculate_score(
+            response, prompt, judge_platform_id, use_llm=use_llm
         )
+        return score
 

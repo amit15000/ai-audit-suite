@@ -127,6 +127,65 @@ SCORING GUIDELINES:
 - 0-1: Critical contradictions (many severe contradictions throughout)"""
 
 
+def _calculate_contradiction_score_from_instances(contradiction_pairs: list, contradictions_found: int) -> float:
+    """Calculate contradiction score (0-10) mathematically based on contradiction instances.
+    
+    Score calculation formula:
+    - Base score starts at 10 (no contradictions)
+    - Deduct points based on number and severity of contradictions
+    - Higher severity and more contradictions = lower score
+    
+    Args:
+        contradiction_pairs: List of contradiction pair dicts with 'severity' field (low/medium/high)
+        contradictions_found: Total number of contradictions found (may differ from len(pairs) if counting is different)
+        
+    Returns:
+        Contradiction score (0-10) where 10 = no contradictions, 0 = many severe contradictions
+    """
+    if not contradiction_pairs and contradictions_found == 0:
+        return 10.0
+    
+    # Use contradictions_found if pairs list is empty but count is provided
+    if not contradiction_pairs and contradictions_found > 0:
+        # Estimate severity distribution if we only have count
+        # Assume medium severity for unclassified contradictions
+        high_severity_count = 0
+        medium_severity_count = contradictions_found
+        low_severity_count = 0
+    else:
+        # Count instances by severity from pairs
+        high_severity_count = sum(1 for c in contradiction_pairs if c.get("severity", "medium").lower() == "high")
+        medium_severity_count = sum(1 for c in contradiction_pairs if c.get("severity", "medium").lower() == "medium")
+        low_severity_count = sum(1 for c in contradiction_pairs if c.get("severity", "medium").lower() == "low")
+        # If contradictions_found > len(pairs), add remaining as medium severity
+        remaining = contradictions_found - len(contradiction_pairs)
+        if remaining > 0:
+            medium_severity_count += remaining
+    
+    total_count = contradictions_found if contradictions_found > 0 else len(contradiction_pairs)
+    
+    # Calculate penalty points based on severity-weighted formula
+    # High severity: 4.0 points each (very severe - contradictions are serious issues)
+    # Medium severity: 2.5 points each (moderate - multiple contradictions are problematic)
+    # Low severity: 1.5 points each (minor but still indicates issues)
+    
+    penalty_points = (high_severity_count * 4.0) + (medium_severity_count * 2.5) + (low_severity_count * 1.5)
+    
+    # Apply extra penalty for high severity instances (contradictions are very serious issues)
+    if high_severity_count > 0:
+        penalty_points += high_severity_count * 0.5
+    
+    # Additional penalty for having multiple contradictions (cumulative effect)
+    if total_count >= 2:
+        penalty_points += (total_count - 1) * 0.5  # Extra 0.5 per contradiction beyond 1
+    
+    # Calculate score: start from 10, subtract penalties
+    score = 10.0 - penalty_points
+    
+    # Ensure score is within bounds (0-10)
+    return max(0.0, min(10.0, score))
+
+
 def _get_openai_client() -> OpenAI | None:
     """Get OpenAI client using OPENAI_API_KEY from environment.
     
@@ -333,8 +392,22 @@ Return ONLY valid JSON with this structure:
             system_prompt=CONTRADICTION_DETECTION_SYSTEM_PROMPT
         )
         
-        # Extract score from JSON response
-        score = extract_json_score(llm_response, default_score=6)
+        # Parse JSON to get contradiction pairs for mathematical calculation
+        try:
+            json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group(0))
+                contradiction_pairs = result.get("contradiction_pairs", [])
+                contradictions_found = result.get("contradictions_found", len(contradiction_pairs))
+                # Calculate score mathematically
+                score = _calculate_contradiction_score_from_instances(contradiction_pairs, contradictions_found)
+            else:
+                # Fallback: extract score directly
+                score = extract_json_score(llm_response, default_score=6)
+        except (json.JSONDecodeError, KeyError):
+            # Fallback: extract score directly
+            score = extract_json_score(llm_response, default_score=6)
+        
         return clamp_score(score)
     
     async def _get_detailed_contradictions_with_llm(
@@ -411,22 +484,24 @@ Return ONLY valid JSON with this structure:
                 result = json.loads(llm_response)
             
             # Ensure all required fields exist
-            score = result.get("score", 6)
             contradictions_found = result.get("contradictions_found", 0)
             contradiction_pairs = result.get("contradiction_pairs", [])
             explanation = result.get("explanation", "No explanation provided")
             
+            # Calculate score mathematically based on detected contradictions
+            # This ensures accurate scoring regardless of LLM interpretation
+            calculated_score = _calculate_contradiction_score_from_instances(contradiction_pairs, contradictions_found)
+            
             return {
-                "score": clamp_score(score),
+                "score": clamp_score(calculated_score),
                 "contradictions_found": contradictions_found,
                 "contradiction_pairs": contradiction_pairs,
                 "explanation": explanation
             }
         except (json.JSONDecodeError, KeyError) as e:
-            # If parsing fails, extract score and return basic structure
-            score = extract_json_score(llm_response, default_score=6)
+            # If parsing fails, return default structure
             return {
-                "score": clamp_score(score),
+                "score": 6,
                 "contradictions_found": 0,
                 "contradiction_pairs": [],
                 "explanation": f"Failed to parse LLM response: {str(e)}"

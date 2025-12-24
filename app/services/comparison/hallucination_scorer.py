@@ -34,7 +34,7 @@ class HallucinationScorer:
             self.citation_verifier, self.ai_service
         )
         self.contradictory_info_scorer = ContradictoryInfoScorer()
-        self.multi_llm_comparison_scorer = MultiLLMComparisonScorer()
+        self.multi_llm_comparison_scorer = MultiLLMComparisonScorer()  # No longer needs ai_service
         # External fact check scorer will be initialized lazily with judge_platform_id
         self._external_fact_check_scorer: ExternalFactCheckScorer | None = None
 
@@ -45,6 +45,8 @@ class HallucinationScorer:
         all_responses: dict[str, str],
         use_llm: bool = False,
         use_embeddings: bool = False,
+        original_prompt: str | None = None,
+        target_platform_id: str | None = None,
     ) -> HallucinationSubScore:
         """Calculate the 4 hallucination sub-scores.
         
@@ -56,6 +58,8 @@ class HallucinationScorer:
             all_responses: Dictionary of all LLM responses for comparison
             use_llm: Whether to use LLM for enhanced evaluation (default: False)
             use_embeddings: Whether to use embeddings for semantic similarity (default: False)
+            original_prompt: Original prompt that generated the response (for multi-LLM comparison)
+            target_platform_id: Platform ID that generated the response (for multi-LLM comparison)
         
         Returns:
             HallucinationSubScore with scores for:
@@ -75,9 +79,79 @@ class HallucinationScorer:
         contradictory_info_score = await self.contradictory_info_scorer.calculate_score(
             response, judge_platform_id, use_llm=True  # Always use LLM for contradictory info
         )
-        multi_llm_comparison_score = await self.multi_llm_comparison_scorer.calculate_score(
-            response, all_responses, use_embeddings=use_embeddings
-        )
+        
+        # Multi-LLM comparison: Use existing responses from all_responses if available, otherwise generate new ones
+        multi_llm_comparison_score = 6  # Default neutral score
+        multi_llm_comparison_details = None
+        if original_prompt and target_platform_id:
+            try:
+                # Use existing responses from all_responses (if user already selected multiple platforms)
+                multi_llm_comparison_score = await self.multi_llm_comparison_scorer.calculate_score(
+                    response, original_prompt, target_platform_id, judge_platform_id, use_llm=True, all_responses=all_responses
+                )
+                # Get detailed comparison results
+                detailed_comparison = await self.multi_llm_comparison_scorer.get_detailed_comparison(
+                    response, original_prompt, target_platform_id, judge_platform_id, use_llm=True, all_responses=all_responses
+                )
+                from app.domain.schemas import (
+                    MultiLLMComparisonDetails,
+                    MultiLLMComparisonUniqueClaim,
+                    MultiLLMComparisonContradictoryClaim,
+                    MultiLLMComparisonConsensusClaim,
+                )
+                
+                # Convert to schema format
+                unique_claims = [
+                    MultiLLMComparisonUniqueClaim(
+                        claim=claim.get("claim", ""),
+                        explanation=claim.get("explanation", ""),
+                        severity=claim.get("severity", "medium"),
+                    )
+                    for claim in detailed_comparison.get("unique_claims", [])
+                ]
+                
+                contradictory_claims = [
+                    MultiLLMComparisonContradictoryClaim(
+                        target_claim=claim.get("target_claim", ""),
+                        consensus_claim=claim.get("consensus_claim", ""),
+                        consensus_count=claim.get("consensus_count", 0),
+                        explanation=claim.get("explanation", ""),
+                        severity=claim.get("severity", "medium"),
+                    )
+                    for claim in detailed_comparison.get("contradictory_claims", [])
+                ]
+                
+                consensus_claims = [
+                    MultiLLMComparisonConsensusClaim(
+                        claim=claim.get("claim", ""),
+                        agreement_count=claim.get("agreement_count", 0),
+                        total_responses=claim.get("total_responses", 0),
+                    )
+                    for claim in detailed_comparison.get("consensus_claims", [])
+                ]
+                
+                multi_llm_comparison_details = MultiLLMComparisonDetails(
+                    sub_score_name="Multi-LLM Comparison",
+                    score=detailed_comparison["score"],
+                    consensus_alignment=detailed_comparison.get("consensus_alignment", 50.0),
+                    unique_claims_count=detailed_comparison.get("unique_claims_count", 0),
+                    contradictory_claims_count=detailed_comparison.get("contradictory_claims_count", 0),
+                    consensus_claims_count=detailed_comparison.get("consensus_claims_count", 0),
+                    reference_llms_used=detailed_comparison.get("reference_llms_used", []),
+                    unique_claims=unique_claims,
+                    contradictory_claims=contradictory_claims,
+                    consensus_claims=consensus_claims,
+                    explanation=detailed_comparison.get("explanation", ""),
+                )
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger(__name__)
+                logger.warning(
+                    "multi_llm_comparison_calculation_failed",
+                    error=str(e),
+                    exc_info=True,
+                )
+                # Use default score on error
         
         # Calculate external fact check sub-score with details
         external_fact_check_score = 50  # Default neutral score
@@ -166,6 +240,7 @@ class HallucinationScorer:
             externalFactCheckDetails=external_fact_check_result,
             fabricatedCitationsDetails=fabricated_citations_details,
             contradictoryInfoDetails=contradictory_info_details,
+            multiLLMComparisonDetails=multi_llm_comparison_details,
         )
 
     # Legacy method names for backward compatibility
@@ -245,6 +320,5 @@ class HallucinationScorer:
         Returns:
             Score between 0-10
         """
-        return await self.multi_llm_comparison_scorer.calculate_score(
-            response, all_responses, use_embeddings=use_embeddings
-        )
+        # TODO: Implement new multi-LLM comparison score calculation
+        return 6  # Placeholder until new implementation

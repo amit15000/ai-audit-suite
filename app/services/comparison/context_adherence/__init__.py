@@ -6,6 +6,7 @@ from app.services.comparison.context_adherence.tone_of_voice import ToneOfVoiceS
 from app.services.comparison.context_adherence.length_constraints import LengthConstraintsScorer
 from app.services.comparison.context_adherence.format_rules import FormatRulesScorer
 from app.services.comparison.context_adherence.brand_voice import BrandVoiceScorer
+from app.services.comparison.context_adherence.prompt_parser import PromptParser, ParsedPrompt
 
 __all__ = [
     "AllInstructionsScorer",
@@ -13,5 +14,7 @@ __all__ = [
     "LengthConstraintsScorer",
     "FormatRulesScorer",
     "BrandVoiceScorer",
+    "PromptParser",
+    "ParsedPrompt",
 ]
 

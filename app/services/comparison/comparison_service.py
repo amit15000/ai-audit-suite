@@ -347,6 +347,7 @@ async def process_comparison(
                 judge_platform_id,
                 responses,
                 event_manager=event_manager,
+                original_prompt=prompt_text,  # Pass original prompt for multi-LLM comparison
             )
 
             top_reasons = await scorer.generate_top_reasons(
@@ -463,7 +464,7 @@ async def process_comparison(
                 "id": judge_platform_id,
                 "name": get_platform_name(judge_platform_id),
             },
-            "platforms": [p.model_dump() for p in platform_results],
+            "platforms": [p.model_dump(exclude_none=False) for p in platform_results],
             "sortedBy": "score",
             "winner": {
                 "id": platform_results[0].id,

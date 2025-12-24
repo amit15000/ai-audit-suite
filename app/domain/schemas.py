@@ -235,6 +235,48 @@ class FabricatedCitationsDetails(BaseModel):
     citations: list[dict] = Field(default_factory=list, description="List of citation verification details")
 
 
+class MultiLLMComparisonUniqueClaim(BaseModel):
+    """Schema for a unique claim found only in target response."""
+
+    claim: str = Field(..., description="The unique claim text from target response")
+    explanation: str = Field(..., description="Why this is unique and potentially a hallucination")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+
+
+class MultiLLMComparisonContradictoryClaim(BaseModel):
+    """Schema for a contradictory claim between target and reference responses."""
+
+    target_claim: str = Field(..., description="The claim from target response")
+    consensus_claim: str = Field(..., description="What reference responses say")
+    consensus_count: int = Field(..., ge=0, description="Number of reference responses agreeing")
+    explanation: str = Field(..., description="Why this is contradictory")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+
+
+class MultiLLMComparisonConsensusClaim(BaseModel):
+    """Schema for a consensus claim where all responses agree."""
+
+    claim: str = Field(..., description="The claim text")
+    agreement_count: int = Field(..., ge=0, description="Number of responses agreeing")
+    total_responses: int = Field(..., ge=0, description="Total number of reference responses")
+
+
+class MultiLLMComparisonDetails(BaseModel):
+    """Schema for multi-LLM comparison detailed results."""
+
+    sub_score_name: str = Field(default="Multi-LLM Comparison", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    consensus_alignment: float = Field(..., ge=0, le=100, description="Percentage of alignment with reference responses (0-100)")
+    unique_claims_count: int = Field(..., ge=0, description="Number of unique claims found")
+    contradictory_claims_count: int = Field(..., ge=0, description="Number of contradictory claims found")
+    consensus_claims_count: int = Field(..., ge=0, description="Number of consensus claims found")
+    reference_llms_used: list[str] = Field(default_factory=list, description="List of LLM platform IDs used for comparison")
+    unique_claims: list[MultiLLMComparisonUniqueClaim] = Field(default_factory=list, description="List of unique claims")
+    contradictory_claims: list[MultiLLMComparisonContradictoryClaim] = Field(default_factory=list, description="List of contradictory claims")
+    consensus_claims: list[MultiLLMComparisonConsensusClaim] = Field(default_factory=list, description="List of consensus claims")
+    explanation: str = Field(default="", description="Overall explanation of comparison results")
+
+
 class HallucinationSubScore(BaseModel):
     """Schema for hallucination sub-score metrics."""
 
@@ -246,6 +288,7 @@ class HallucinationSubScore(BaseModel):
     externalFactCheckDetails: ExternalFactCheckResult | None = Field(default=None, description="Detailed external fact check results")
     fabricatedCitationsDetails: FabricatedCitationsDetails | None = Field(default=None, description="Detailed fabricated citations results")
     contradictoryInfoDetails: ContradictoryInfoDetails | None = Field(default=None, description="Detailed contradictory information results")
+    multiLLMComparisonDetails: MultiLLMComparisonDetails | None = Field(default=None, description="Detailed multi-LLM comparison results")
 
 
 class AccuracySubScore(BaseModel):
@@ -288,14 +331,71 @@ class ComplianceSubScore(BaseModel):
     confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
 
 
+class BiasInstance(BaseModel):
+    """Schema for a single bias instance detected in the response."""
+
+    type: str = Field(..., description="Type of bias (gender, racial, religious, political, cultural, age, disability, socioeconomic, sexual_orientation, other)")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+    text: str = Field(..., description="Exact biased statement from response")
+    explanation: str = Field(..., description="Why this is biased and what stereotype it reinforces")
+    category: str = Field(default="", description="Specific category if applicable (e.g., 'ability_stereotype', 'role_stereotype')")
+
+
+class FairnessInstance(BaseModel):
+    """Schema for a single fairness instance detected in the response."""
+
+    type: str = Field(..., description="Type of fairness indicator (inclusivity, balanced_representation, equal_treatment, cultural_sensitivity, language_inclusivity)")
+    strength: str = Field(..., description="Strength level (low, medium, high)")
+    text: str = Field(..., description="Exact fair statement from response")
+    explanation: str = Field(..., description="Why this demonstrates fairness and what positive indicator it shows")
+
+
+class BiasSummary(BaseModel):
+    """Schema for bias summary counts."""
+
+    gender_bias_count: int = Field(default=0, ge=0, description="Number of gender bias instances")
+    racial_bias_count: int = Field(default=0, ge=0, description="Number of racial bias instances")
+    religious_bias_count: int = Field(default=0, ge=0, description="Number of religious bias instances")
+    political_bias_count: int = Field(default=0, ge=0, description="Number of political bias instances")
+    cultural_insensitivity_count: int = Field(default=0, ge=0, description="Number of cultural insensitivity instances")
+    other_bias_count: int = Field(default=0, ge=0, description="Number of other bias instances")
+    total_bias_count: int = Field(default=0, ge=0, description="Total number of bias instances")
+
+
+class FairnessIndicators(BaseModel):
+    """Schema for fairness indicator flags."""
+
+    inclusivity: bool = Field(default=False, description="Whether high inclusivity is detected")
+    balanced_representation: bool = Field(default=False, description="Whether balanced representation is detected")
+    equal_treatment: bool = Field(default=False, description="Whether equal treatment is detected")
+    cultural_sensitivity: bool = Field(default=False, description="Whether cultural sensitivity is detected")
+    language_inclusivity: bool = Field(default=False, description="Whether inclusive language is detected")
+
+
+class BiasFairnessDetails(BaseModel):
+    """Schema for comprehensive bias and fairness detailed results."""
+
+    sub_score_name: str = Field(default="Bias & Fairness", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Overall combined score (0-10, weighted combination of bias_score and fairness_score)")
+    bias_score: int = Field(..., ge=0, le=10, description="Bias score (0-10, where 10=no bias)")
+    fairness_score: int = Field(..., ge=0, le=10, description="Fairness score (0-10, where 10=high fairness)")
+    overall_score: float = Field(..., ge=0, le=10, description="Overall score calculated as (bias_score × 0.6) + (fairness_score × 0.4)")
+    bias_instances: list[BiasInstance] = Field(default_factory=list, description="List of specific bias instances detected")
+    fairness_instances: list[FairnessInstance] = Field(default_factory=list, description="List of specific fairness instances detected")
+    bias_summary: BiasSummary = Field(..., description="Summary of bias counts by type")
+    fairness_indicators: FairnessIndicators = Field(..., description="Fairness indicator flags")
+    explanation: str = Field(default="", description="Overall explanation of bias and fairness analysis")
+
+
 class BiasFairnessSubScore(BaseModel):
     """Schema for bias & fairness score sub-score metrics."""
 
-    genderBias: bool = Field(..., description="Whether gender bias is detected (Yes/No)")
-    racialBias: bool = Field(..., description="Whether racial bias is detected (Yes/No)")
-    religiousBias: bool = Field(..., description="Whether religious bias is detected (Yes/No)")
-    politicalBias: bool = Field(..., description="Whether political bias is detected (Yes/No)")
-    culturalInsensitivity: bool = Field(..., description="Whether cultural insensitivity is detected (Yes/No)")
+    genderBias: bool = Field(..., description="Whether gender bias is detected (Yes/No) - derived from bias_instances")
+    racialBias: bool = Field(..., description="Whether racial bias is detected (Yes/No) - derived from bias_instances")
+    religiousBias: bool = Field(..., description="Whether religious bias is detected (Yes/No) - derived from bias_instances")
+    politicalBias: bool = Field(..., description="Whether political bias is detected (Yes/No) - derived from bias_instances")
+    culturalInsensitivity: bool = Field(..., description="Whether cultural insensitivity is detected (Yes/No) - derived from bias_instances")
+    biasFairnessDetails: BiasFairnessDetails | None = Field(default=None, description="Detailed bias analysis with all instances and explanations")
 
 
 class SafetySubScore(BaseModel):
@@ -317,6 +417,11 @@ class ContextAdherenceSubScore(BaseModel):
     lengthConstraints: str = Field(..., description="Length constraints adherence (e.g., 'Short', 'Medium', 'Long')")
     formatRules: float = Field(..., ge=0, le=100, description="Format rules adherence percentage (0-100)")
     brandVoice: float = Field(..., ge=0, le=100, description="Brand voice adherence percentage (0-100)")
+    allInstructionsExplanation: Optional[str] = Field(None, description="Explanation for all instructions adherence score")
+    toneOfVoiceExplanation: Optional[str] = Field(None, description="Explanation for tone of voice detection")
+    lengthConstraintsExplanation: Optional[str] = Field(None, description="Explanation for length constraints assessment")
+    formatRulesExplanation: Optional[str] = Field(None, description="Explanation for format rules adherence score")
+    brandVoiceExplanation: Optional[str] = Field(None, description="Explanation for brand voice adherence score")
 
 
 class StabilityRobustnessSubScore(BaseModel):
