@@ -450,6 +450,32 @@ class AgentActionSafetySubScore(BaseModel):
     allowedBlockedDecisions: float = Field(..., ge=0, le=100, description="Allowed/Blocked decisions percentage (0-100)")
 
 
+class VulnerabilityFinding(BaseModel):
+    """Schema for individual vulnerability finding."""
+
+    type: str = Field(..., description="Type of vulnerability")
+    severity: Literal["low", "medium", "high", "critical"] = Field(..., description="Severity level")
+    line: Optional[int] = Field(None, description="Line number (if applicable)")
+    description: str = Field(..., description="Description of the vulnerability")
+    recommendedFix: str = Field(..., description="Recommended fix")
+    codeSnippet: Optional[str] = Field(None, description="Relevant code snippet")
+
+
+class CodeVulnerabilityDetails(BaseModel):
+    """Detailed code vulnerability analysis results."""
+
+    sub_score_name: str = Field(default="Code Vulnerability Auditor", description="Sub-score name")
+    score: int = Field(..., ge=0, le=10, description="Overall score (0-10)")
+    riskLevel: Literal["low", "medium", "high", "critical"] = Field(..., description="Overall risk level")
+    securityFlaws: List[VulnerabilityFinding] = Field(default_factory=list, description="Security flaw findings")
+    outdatedLibraries: List[VulnerabilityFinding] = Field(default_factory=list, description="Outdated library findings")
+    injectionRisks: List[VulnerabilityFinding] = Field(default_factory=list, description="Injection risk findings")
+    logicErrors: List[VulnerabilityFinding] = Field(default_factory=list, description="Logic error findings")
+    performanceIssues: List[VulnerabilityFinding] = Field(default_factory=list, description="Performance issue findings")
+    recommendedFixes: List[str] = Field(default_factory=list, description="Aggregated recommended fixes")
+    explanation: str = Field(default="", description="Overall explanation")
+
+
 class CodeVulnerabilitySubScore(BaseModel):
     """Schema for code vulnerability auditor sub-score metrics."""
 
@@ -458,6 +484,9 @@ class CodeVulnerabilitySubScore(BaseModel):
     injectionRisks: float = Field(..., ge=0, le=100, description="Injection risks percentage (0-100)")
     logicErrors: float = Field(..., ge=0, le=100, description="Logic errors percentage (0-100)")
     performanceIssues: float = Field(..., ge=0, le=100, description="Performance issues percentage (0-100)")
+    codeVulnerabilityDetails: Optional[CodeVulnerabilityDetails] = Field(
+        default=None, description="Detailed vulnerability findings with risk level and recommended fixes"
+    )
 
 
 class DataExtractionAccuracySubScore(BaseModel):
@@ -497,6 +526,15 @@ class MultiJudgeAIReviewSubScore(BaseModel):
     modelCritiques: float = Field(..., ge=0, le=100, description="Model critiques percentage (0-100)")
 
 
+class ReasoningQualitySubScore(BaseModel):
+    """Schema for reasoning quality score sub-score metrics."""
+
+    stepByStepReasoning: int = Field(..., ge=0, le=10, description="Score for step-by-step reasoning quality (0-10)")
+    logicalConsistency: int = Field(..., ge=0, le=10, description="Score for logical consistency (0-10)")
+    missingSteps: int = Field(..., ge=0, le=10, description="Score for missing steps detection (0-10)")
+    wrongLogic: int = Field(..., ge=0, le=10, description="Score for wrong logic detection (0-10)")
+
+
 class ExplainabilitySubScore(BaseModel):
     """Schema for explainability score sub-score metrics."""
 
@@ -531,7 +569,9 @@ class AuditScore(BaseModel):
         BrandConsistencySubScore,
         AIPlagiarismSubScore,
         MultiJudgeAIReviewSubScore,
-        ExplainabilitySubScore
+        ReasoningQualitySubScore,
+        ExplainabilitySubScore,
+        CodeVulnerabilityDetails
     ]] = Field(None, description="Sub-scores for detailed metrics (varies by score type)")
     # Note: isCritical can be computed from value <= 4, so it's redundant and removed
 

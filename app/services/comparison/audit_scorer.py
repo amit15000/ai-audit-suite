@@ -27,6 +27,7 @@ from app.domain.schemas import (
     MultiJudgeAIReviewSubScore,
     MultiLLMConsensusSubScore,
     PromptSensitivitySubScore,
+    ReasoningQualitySubScore,
     SafetySubScore,
     SourceAuthenticitySubScore,
     StabilityRobustnessSubScore,
@@ -47,6 +48,7 @@ from app.services.comparison.hallucination_scorer import HallucinationScorer
 from app.services.comparison.multi_judge_ai_review_scorer import MultiJudgeAIReviewScorer
 from app.services.comparison.multi_llm_consensus_scorer import MultiLLMConsensusScorer
 from app.services.comparison.prompt_sensitivity_scorer import PromptSensitivityScorer
+from app.services.comparison.reasoning_quality_scorer import ReasoningQualityScorer
 from app.services.comparison.safety_scorer import SafetyScorer
 from app.services.comparison.source_authenticity_scorer import SourceAuthenticityScorer
 from app.services.comparison.stability_robustness_scorer import StabilityRobustnessScorer
@@ -223,6 +225,7 @@ class AuditScorer:
         self.brand_consistency_scorer = BrandConsistencyScorer()
         self.ai_plagiarism_scorer = AIPlagiarismScorer()
         self.multi_judge_ai_review_scorer = MultiJudgeAIReviewScorer()
+        self.reasoning_quality_scorer = ReasoningQualityScorer()
         self.explainability_scorer = ExplainabilityScorer()
 
     async def calculate_scores(
@@ -249,6 +252,8 @@ class AuditScorer:
         # Store prompt and platform_id for use in _calculate_category_score
         self._current_prompt = original_prompt
         self._current_platform_id = platform_id
+        # Store hallucination results for use by Reasoning Quality Score
+        self._hallucination_sub_score = None
         scores = []
         total_categories = len(self.AUDIT_CATEGORIES)
         import structlog
@@ -288,6 +293,10 @@ class AuditScorer:
                     score=score_value,
                     progress=f"{idx + 1}/{total_categories}",
                 )
+                
+                # Store hallucination results for use by Reasoning Quality Score
+                if category == "Hallucination Score" and sub_scores is not None:
+                    self._hallucination_sub_score = sub_scores
             except asyncio.TimeoutError:
                 timeout_used = HALLUCINATION_SCORE_TIMEOUT if category == "Hallucination Score" else DEFAULT_SCORE_CALCULATION_TIMEOUT
                 logger.error(
@@ -335,6 +344,7 @@ class AuditScorer:
                 "Multi-LLM Consensus Score",
                 "Deviation Map",
                 "Source Authenticity Checker",
+                "Reasoning Quality Score",
                 "Compliance Score",
                 "Bias & Fairness Score",
                 "Safety Score",
@@ -515,7 +525,15 @@ class AuditScorer:
         ContextAdherenceSubScore,
         StabilityRobustnessSubScore,
         PromptSensitivitySubScore,
-        AISafetyGuardrailSubScore
+        AISafetyGuardrailSubScore,
+        AgentActionSafetySubScore,
+        CodeVulnerabilitySubScore,
+        DataExtractionAccuracySubScore,
+        BrandConsistencySubScore,
+        AIPlagiarismSubScore,
+        MultiJudgeAIReviewSubScore,
+        ReasoningQualitySubScore,
+        ExplainabilitySubScore
     ]]]:
         """Calculate score and explanation for a specific category using judge platform.
         
@@ -531,6 +549,8 @@ class AuditScorer:
         if category == "Hallucination Score":
             # Use LLM=True to enable contradictory info detection (requires LLM)
             # Also enables LLM-enhanced scoring for other sub-scores
+            # NOTE: Contradictory info scores are calculated mathematically based on detected
+            # contradiction instances (number and severity), ensuring accurate penalization
             # Get original prompt and target platform from context if available
             original_prompt = getattr(self, '_current_prompt', None)
             target_platform_id = getattr(self, '_current_platform_id', None)
@@ -562,6 +582,13 @@ class AuditScorer:
                 response, judge_platform_id,
                 use_llm=False  # Set to True for LLM-enhanced scoring
             )
+        elif category == "Reasoning Quality Score":
+            # Reuse hallucination results for logical consistency sub-score
+            hallucination_sub_score = getattr(self, '_hallucination_sub_score', None)
+            sub_scores = await self.reasoning_quality_scorer.calculate_sub_scores(
+                response, judge_platform_id,
+                hallucination_sub_score=hallucination_sub_score
+            )
         elif category == "Compliance Score":
             sub_scores = await self.compliance_scorer.calculate_sub_scores(
                 response, judge_platform_id,
@@ -569,6 +596,8 @@ class AuditScorer:
             )
         elif category == "Bias & Fairness Score":
             # Use LLM=True for comprehensive bias analysis (required for accurate detection)
+            # NOTE: Bias scores are calculated mathematically based on detected bias instances
+            # (number and severity), ensuring accurate penalization regardless of LLM interpretation
             sub_scores = await self.bias_fairness_scorer.calculate_sub_scores(
                 response, judge_platform_id,
                 use_llm=True  # Required for comprehensive bias analysis
@@ -608,10 +637,19 @@ class AuditScorer:
                 use_llm=False  # Set to True for LLM-enhanced scoring
             )
         elif category == "Code Vulnerability Auditor":
+            # Use LLM=True for comprehensive code analysis with risk levels and recommended fixes
             sub_scores = await self.code_vulnerability_scorer.calculate_sub_scores(
                 response, judge_platform_id,
-                use_llm=False  # Set to True for LLM-enhanced scoring
+                use_llm=True  # Required for comprehensive analysis with risk level and recommended fixes
             )
+            # If we have detailed analysis, use its score and explanation
+            if sub_scores and hasattr(sub_scores, 'codeVulnerabilityDetails') and sub_scores.codeVulnerabilityDetails:
+                details = sub_scores.codeVulnerabilityDetails
+                # Extract score and explanation from details
+                score_from_details = details.score
+                explanation_from_details = details.explanation
+                # Use the score from detailed analysis and skip LLM evaluation
+                return (score_from_details, explanation_from_details, sub_scores)
         elif category == "Data Extraction Accuracy Audit":
             sub_scores = await self.data_extraction_accuracy_scorer.calculate_sub_scores(
                 response, ground_truth="", judge_platform_id=judge_platform_id,
