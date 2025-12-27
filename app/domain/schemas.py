@@ -322,13 +322,58 @@ class SourceAuthenticitySubScore(BaseModel):
     confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
 
 
+class ComplianceRule(BaseModel):
+    """Schema for individual compliance rule evaluation."""
+
+    module: str = Field(..., description="Compliance module (gdpr, eu_ai_act, responsible_ai, iso_42001, hipaa, soc2_ai)")
+    rule_name: str = Field(..., description="Name/description of the rule")
+    status: str = Field(..., description="Rule status: passed or violated")
+    severity: str = Field(default="low", description="Severity if violated: low, medium, or high")
+    text: str = Field(default="", description="Relevant text from response")
+    explanation: str = Field(default="", description="Explanation of why rule passed or was violated")
+
+
+class ComplianceModuleScore(BaseModel):
+    """Schema for per-module compliance score."""
+
+    module: str = Field(..., description="Compliance module name")
+    score: int = Field(..., ge=0, le=10, description="Module compliance score (0-10)")
+    passed_rules: int = Field(default=0, ge=0, description="Number of passed rules")
+    violated_rules: int = Field(default=0, ge=0, description="Number of violated rules")
+    high_risk_violations: int = Field(default=0, ge=0, description="Number of high-risk violations")
+
+
+class ComplianceSummary(BaseModel):
+    """Schema for compliance summary statistics."""
+
+    total_rules: int = Field(default=0, ge=0, description="Total number of rules checked")
+    passed_rules: int = Field(default=0, ge=0, description="Number of passed rules")
+    violated_rules: int = Field(default=0, ge=0, description="Number of violated rules")
+    high_risk_violations: int = Field(default=0, ge=0, description="Number of high-risk violations")
+
+
+class ComplianceDetails(BaseModel):
+    """Schema for comprehensive compliance analysis."""
+
+    sub_score_name: str = Field(default="Compliance Score", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Overall compliance score (0-10)")
+    module_scores: dict[str, int] = Field(default_factory=dict, description="Per-module scores")
+    rules: list[ComplianceRule] = Field(default_factory=list, description="List of all compliance rules evaluated")
+    summary: ComplianceSummary = Field(..., description="Summary statistics")
+    explanation: str = Field(default="", description="Overall compliance assessment explanation")
+
+
 class ComplianceSubScore(BaseModel):
     """Schema for compliance score sub-score metrics."""
 
-    checksUrlsExist: bool = Field(..., description="Whether URLs existence is checked (Yes/No)")
-    verifiesPapersExist: bool = Field(..., description="Whether papers existence is verified (Yes/No)")
-    detectsFakeCitations: bool = Field(..., description="Whether fake citations are detected (Yes/No)")
-    confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
+    # Legacy fields (deprecated, kept for backward compatibility)
+    checksUrlsExist: bool = Field(default=False, description="[DEPRECATED] Whether URLs existence is checked")
+    verifiesPapersExist: bool = Field(default=False, description="[DEPRECATED] Whether papers existence is verified")
+    detectsFakeCitations: bool = Field(default=False, description="[DEPRECATED] Whether fake citations are detected")
+    confirmsLegalReferences: bool = Field(default=False, description="[DEPRECATED] Whether legal references are confirmed")
+    
+    # New compliance fields
+    complianceDetails: ComplianceDetails | None = Field(default=None, description="Detailed regulatory compliance analysis")
 
 
 class BiasInstance(BaseModel):

@@ -590,9 +590,12 @@ class AuditScorer:
                 hallucination_sub_score=hallucination_sub_score
             )
         elif category == "Compliance Score":
+            # Use LLM=True for comprehensive compliance analysis (required for regulatory compliance evaluation)
+            # NOTE: Compliance scores are calculated mathematically based on detected rule violations
+            # (number and severity), ensuring accurate penalization regardless of LLM interpretation
             sub_scores = await self.compliance_scorer.calculate_sub_scores(
                 response, judge_platform_id,
-                use_llm=False  # Set to True for LLM-enhanced scoring
+                use_llm=True  # Required for comprehensive regulatory compliance analysis
             )
         elif category == "Bias & Fairness Score":
             # Use LLM=True for comprehensive bias analysis (required for accurate detection)
