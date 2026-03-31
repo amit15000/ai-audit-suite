@@ -23,7 +23,7 @@ Create a `.env` file in the project root with:
 
 ```env
 # Local Docker PostgreSQL (recommended for development)
-DB_URL=postgresql://audit_user:audit_password@localhost:5432/audit_db
+DB_URL=postgresql://audit_user:<password>@localhost:5432/audit_db
 
 # Optional: Supabase (only if DB_URL is not set)
 # SUPABASE_DB_URL=postgresql://postgres:password@host:5432/postgres
