@@ -284,8 +284,8 @@ class TestFabricatedCitationsScorer:
         
         score = self.scorer._calculate_base_score_from_verification(results)
         
-        # Should be moderate score (6.0) for 50% fabricated
-        assert score == 6.0
+        # Scoring curve now maps 50% fabricated to 4.0
+        assert score == 4.0
 
     @pytest.mark.asyncio
     async def test_parse_llm_response_valid_json(self):
