@@ -113,7 +113,7 @@ Create a `.env` file in the project root. Key variables:
 
 ```env
 # Database (choose one)
-DB_URL=postgresql://audit_user:audit_password@localhost:5432/audit_db
+DB_URL=postgresql://audit_user:<password>@localhost:5432/audit_db
 # SUPABASE_DB_URL=postgresql://postgres:password@host:5432/postgres
 
 # Storage (MinIO defaults)
