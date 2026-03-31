@@ -204,6 +204,79 @@ class ExternalFactCheckResult(BaseModel):
     notes: list[str] = Field(default_factory=list, description="Additional notes or warnings")
 
 
+class ContradictoryInfoContradictionPair(BaseModel):
+    """Schema for a single contradiction pair."""
+
+    statement_1: str = Field(..., description="First contradictory statement")
+    statement_2: str = Field(..., description="Second contradictory statement")
+    type: str = Field(..., description="Type of contradiction (direct, factual, temporal, logical, causal, attributive)")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+    semantic_reasoning: str = Field(..., description="AI's explanation of why these statements are contradictory")
+
+
+class ContradictoryInfoDetails(BaseModel):
+    """Schema for contradictory information detailed results."""
+
+    sub_score_name: str = Field(default="Contradictory Information", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    contradictions_found: int = Field(..., ge=0, description="Number of contradictions detected")
+    contradiction_pairs: list[ContradictoryInfoContradictionPair] = Field(default_factory=list, description="List of contradiction pairs with statements and explanations")
+    explanation: str = Field(default="", description="Overall explanation of contradictions found")
+
+
+class FabricatedCitationsDetails(BaseModel):
+    """Schema for fabricated citations detailed results."""
+
+    sub_score_name: str = Field(default="Fabricated Citations", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    total_citations: int = Field(..., ge=0, description="Total number of citations found")
+    verified_count: int = Field(..., ge=0, description="Number of verified citations")
+    fabricated_count: int = Field(..., ge=0, description="Number of fabricated citations")
+    citations: list[dict] = Field(default_factory=list, description="List of citation verification details")
+
+
+class MultiLLMComparisonUniqueClaim(BaseModel):
+    """Schema for a unique claim found only in target response."""
+
+    claim: str = Field(..., description="The unique claim text from target response")
+    explanation: str = Field(..., description="Why this is unique and potentially a hallucination")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+
+
+class MultiLLMComparisonContradictoryClaim(BaseModel):
+    """Schema for a contradictory claim between target and reference responses."""
+
+    target_claim: str = Field(..., description="The claim from target response")
+    consensus_claim: str = Field(..., description="What reference responses say")
+    consensus_count: int = Field(..., ge=0, description="Number of reference responses agreeing")
+    explanation: str = Field(..., description="Why this is contradictory")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+
+
+class MultiLLMComparisonConsensusClaim(BaseModel):
+    """Schema for a consensus claim where all responses agree."""
+
+    claim: str = Field(..., description="The claim text")
+    agreement_count: int = Field(..., ge=0, description="Number of responses agreeing")
+    total_responses: int = Field(..., ge=0, description="Total number of reference responses")
+
+
+class MultiLLMComparisonDetails(BaseModel):
+    """Schema for multi-LLM comparison detailed results."""
+
+    sub_score_name: str = Field(default="Multi-LLM Comparison", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Sub-score value (0-10)")
+    consensus_alignment: float = Field(..., ge=0, le=100, description="Percentage of alignment with reference responses (0-100)")
+    unique_claims_count: int = Field(..., ge=0, description="Number of unique claims found")
+    contradictory_claims_count: int = Field(..., ge=0, description="Number of contradictory claims found")
+    consensus_claims_count: int = Field(..., ge=0, description="Number of consensus claims found")
+    reference_llms_used: list[str] = Field(default_factory=list, description="List of LLM platform IDs used for comparison")
+    unique_claims: list[MultiLLMComparisonUniqueClaim] = Field(default_factory=list, description="List of unique claims")
+    contradictory_claims: list[MultiLLMComparisonContradictoryClaim] = Field(default_factory=list, description="List of contradictory claims")
+    consensus_claims: list[MultiLLMComparisonConsensusClaim] = Field(default_factory=list, description="List of consensus claims")
+    explanation: str = Field(default="", description="Overall explanation of comparison results")
+
+
 class HallucinationSubScore(BaseModel):
     """Schema for hallucination sub-score metrics."""
 
@@ -212,6 +285,10 @@ class HallucinationSubScore(BaseModel):
     contradictoryInfoScore: int = Field(..., ge=0, le=10, description="Score for identifying contradictory information (0-10)")
     multiLLMComparisonScore: int = Field(..., ge=0, le=10, description="Score for comparing against multiple LLMs (0-10)")
     externalFactCheckScore: int = Field(default=50, ge=0, le=100, description="Score for external fact check verification (0-100)")
+    externalFactCheckDetails: ExternalFactCheckResult | None = Field(default=None, description="Detailed external fact check results")
+    fabricatedCitationsDetails: FabricatedCitationsDetails | None = Field(default=None, description="Detailed fabricated citations results")
+    contradictoryInfoDetails: ContradictoryInfoDetails | None = Field(default=None, description="Detailed contradictory information results")
+    multiLLMComparisonDetails: MultiLLMComparisonDetails | None = Field(default=None, description="Detailed multi-LLM comparison results")
 
 
 class AccuracySubScore(BaseModel):
@@ -245,23 +322,125 @@ class SourceAuthenticitySubScore(BaseModel):
     confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
 
 
+class ComplianceRule(BaseModel):
+    """Schema for individual compliance rule evaluation."""
+
+    module: str = Field(..., description="Compliance module (gdpr, eu_ai_act, responsible_ai, iso_42001, hipaa, soc2_ai)")
+    rule_name: str = Field(..., description="Name/description of the rule")
+    status: str = Field(..., description="Rule status: passed or violated")
+    severity: str = Field(default="low", description="Severity if violated: low, medium, or high")
+    text: str = Field(default="", description="Relevant text from response")
+    explanation: str = Field(default="", description="Explanation of why rule passed or was violated")
+
+
+class ComplianceModuleScore(BaseModel):
+    """Schema for per-module compliance score."""
+
+    module: str = Field(..., description="Compliance module name")
+    score: int = Field(..., ge=0, le=10, description="Module compliance score (0-10)")
+    passed_rules: int = Field(default=0, ge=0, description="Number of passed rules")
+    violated_rules: int = Field(default=0, ge=0, description="Number of violated rules")
+    high_risk_violations: int = Field(default=0, ge=0, description="Number of high-risk violations")
+
+
+class ComplianceSummary(BaseModel):
+    """Schema for compliance summary statistics."""
+
+    total_rules: int = Field(default=0, ge=0, description="Total number of rules checked")
+    passed_rules: int = Field(default=0, ge=0, description="Number of passed rules")
+    violated_rules: int = Field(default=0, ge=0, description="Number of violated rules")
+    high_risk_violations: int = Field(default=0, ge=0, description="Number of high-risk violations")
+
+
+class ComplianceDetails(BaseModel):
+    """Schema for comprehensive compliance analysis."""
+
+    sub_score_name: str = Field(default="Compliance Score", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Overall compliance score (0-10)")
+    module_scores: dict[str, int] = Field(default_factory=dict, description="Per-module scores")
+    rules: list[ComplianceRule] = Field(default_factory=list, description="List of all compliance rules evaluated")
+    summary: ComplianceSummary = Field(..., description="Summary statistics")
+    explanation: str = Field(default="", description="Overall compliance assessment explanation")
+
+
 class ComplianceSubScore(BaseModel):
     """Schema for compliance score sub-score metrics."""
 
-    checksUrlsExist: bool = Field(..., description="Whether URLs existence is checked (Yes/No)")
-    verifiesPapersExist: bool = Field(..., description="Whether papers existence is verified (Yes/No)")
-    detectsFakeCitations: bool = Field(..., description="Whether fake citations are detected (Yes/No)")
-    confirmsLegalReferences: bool = Field(..., description="Whether legal references are confirmed (Yes/No)")
+    # Legacy fields (deprecated, kept for backward compatibility)
+    checksUrlsExist: bool = Field(default=False, description="[DEPRECATED] Whether URLs existence is checked")
+    verifiesPapersExist: bool = Field(default=False, description="[DEPRECATED] Whether papers existence is verified")
+    detectsFakeCitations: bool = Field(default=False, description="[DEPRECATED] Whether fake citations are detected")
+    confirmsLegalReferences: bool = Field(default=False, description="[DEPRECATED] Whether legal references are confirmed")
+    
+    # New compliance fields
+    complianceDetails: ComplianceDetails | None = Field(default=None, description="Detailed regulatory compliance analysis")
+
+
+class BiasInstance(BaseModel):
+    """Schema for a single bias instance detected in the response."""
+
+    type: str = Field(..., description="Type of bias (gender, racial, religious, political, cultural, age, disability, socioeconomic, sexual_orientation, other)")
+    severity: str = Field(..., description="Severity level (low, medium, high)")
+    text: str = Field(..., description="Exact biased statement from response")
+    explanation: str = Field(..., description="Why this is biased and what stereotype it reinforces")
+    category: str = Field(default="", description="Specific category if applicable (e.g., 'ability_stereotype', 'role_stereotype')")
+
+
+class FairnessInstance(BaseModel):
+    """Schema for a single fairness instance detected in the response."""
+
+    type: str = Field(..., description="Type of fairness indicator (inclusivity, balanced_representation, equal_treatment, cultural_sensitivity, language_inclusivity)")
+    strength: str = Field(..., description="Strength level (low, medium, high)")
+    text: str = Field(..., description="Exact fair statement from response")
+    explanation: str = Field(..., description="Why this demonstrates fairness and what positive indicator it shows")
+
+
+class BiasSummary(BaseModel):
+    """Schema for bias summary counts."""
+
+    gender_bias_count: int = Field(default=0, ge=0, description="Number of gender bias instances")
+    racial_bias_count: int = Field(default=0, ge=0, description="Number of racial bias instances")
+    religious_bias_count: int = Field(default=0, ge=0, description="Number of religious bias instances")
+    political_bias_count: int = Field(default=0, ge=0, description="Number of political bias instances")
+    cultural_insensitivity_count: int = Field(default=0, ge=0, description="Number of cultural insensitivity instances")
+    other_bias_count: int = Field(default=0, ge=0, description="Number of other bias instances")
+    total_bias_count: int = Field(default=0, ge=0, description="Total number of bias instances")
+
+
+class FairnessIndicators(BaseModel):
+    """Schema for fairness indicator flags."""
+
+    inclusivity: bool = Field(default=False, description="Whether high inclusivity is detected")
+    balanced_representation: bool = Field(default=False, description="Whether balanced representation is detected")
+    equal_treatment: bool = Field(default=False, description="Whether equal treatment is detected")
+    cultural_sensitivity: bool = Field(default=False, description="Whether cultural sensitivity is detected")
+    language_inclusivity: bool = Field(default=False, description="Whether inclusive language is detected")
+
+
+class BiasFairnessDetails(BaseModel):
+    """Schema for comprehensive bias and fairness detailed results."""
+
+    sub_score_name: str = Field(default="Bias & Fairness", description="Name of the sub-score")
+    score: int = Field(..., ge=0, le=10, description="Overall combined score (0-10, weighted combination of bias_score and fairness_score)")
+    bias_score: int = Field(..., ge=0, le=10, description="Bias score (0-10, where 10=no bias)")
+    fairness_score: int = Field(..., ge=0, le=10, description="Fairness score (0-10, where 10=high fairness)")
+    overall_score: float = Field(..., ge=0, le=10, description="Overall score calculated as (bias_score × 0.6) + (fairness_score × 0.4)")
+    bias_instances: list[BiasInstance] = Field(default_factory=list, description="List of specific bias instances detected")
+    fairness_instances: list[FairnessInstance] = Field(default_factory=list, description="List of specific fairness instances detected")
+    bias_summary: BiasSummary = Field(..., description="Summary of bias counts by type")
+    fairness_indicators: FairnessIndicators = Field(..., description="Fairness indicator flags")
+    explanation: str = Field(default="", description="Overall explanation of bias and fairness analysis")
 
 
 class BiasFairnessSubScore(BaseModel):
     """Schema for bias & fairness score sub-score metrics."""
 
-    genderBias: bool = Field(..., description="Whether gender bias is detected (Yes/No)")
-    racialBias: bool = Field(..., description="Whether racial bias is detected (Yes/No)")
-    religiousBias: bool = Field(..., description="Whether religious bias is detected (Yes/No)")
-    politicalBias: bool = Field(..., description="Whether political bias is detected (Yes/No)")
-    culturalInsensitivity: bool = Field(..., description="Whether cultural insensitivity is detected (Yes/No)")
+    genderBias: bool = Field(..., description="Whether gender bias is detected (Yes/No) - derived from bias_instances")
+    racialBias: bool = Field(..., description="Whether racial bias is detected (Yes/No) - derived from bias_instances")
+    religiousBias: bool = Field(..., description="Whether religious bias is detected (Yes/No) - derived from bias_instances")
+    politicalBias: bool = Field(..., description="Whether political bias is detected (Yes/No) - derived from bias_instances")
+    culturalInsensitivity: bool = Field(..., description="Whether cultural insensitivity is detected (Yes/No) - derived from bias_instances")
+    biasFairnessDetails: BiasFairnessDetails | None = Field(default=None, description="Detailed bias analysis with all instances and explanations")
 
 
 class SafetySubScore(BaseModel):
@@ -283,6 +462,11 @@ class ContextAdherenceSubScore(BaseModel):
     lengthConstraints: str = Field(..., description="Length constraints adherence (e.g., 'Short', 'Medium', 'Long')")
     formatRules: float = Field(..., ge=0, le=100, description="Format rules adherence percentage (0-100)")
     brandVoice: float = Field(..., ge=0, le=100, description="Brand voice adherence percentage (0-100)")
+    allInstructionsExplanation: Optional[str] = Field(None, description="Explanation for all instructions adherence score")
+    toneOfVoiceExplanation: Optional[str] = Field(None, description="Explanation for tone of voice detection")
+    lengthConstraintsExplanation: Optional[str] = Field(None, description="Explanation for length constraints assessment")
+    formatRulesExplanation: Optional[str] = Field(None, description="Explanation for format rules adherence score")
+    brandVoiceExplanation: Optional[str] = Field(None, description="Explanation for brand voice adherence score")
 
 
 class StabilityRobustnessSubScore(BaseModel):
@@ -311,6 +495,32 @@ class AgentActionSafetySubScore(BaseModel):
     allowedBlockedDecisions: float = Field(..., ge=0, le=100, description="Allowed/Blocked decisions percentage (0-100)")
 
 
+class VulnerabilityFinding(BaseModel):
+    """Schema for individual vulnerability finding."""
+
+    type: str = Field(..., description="Type of vulnerability")
+    severity: Literal["low", "medium", "high", "critical"] = Field(..., description="Severity level")
+    line: Optional[int] = Field(None, description="Line number (if applicable)")
+    description: str = Field(..., description="Description of the vulnerability")
+    recommendedFix: str = Field(..., description="Recommended fix")
+    codeSnippet: Optional[str] = Field(None, description="Relevant code snippet")
+
+
+class CodeVulnerabilityDetails(BaseModel):
+    """Detailed code vulnerability analysis results."""
+
+    sub_score_name: str = Field(default="Code Vulnerability Auditor", description="Sub-score name")
+    score: int = Field(..., ge=0, le=10, description="Overall score (0-10)")
+    riskLevel: Literal["low", "medium", "high", "critical"] = Field(..., description="Overall risk level")
+    securityFlaws: List[VulnerabilityFinding] = Field(default_factory=list, description="Security flaw findings")
+    outdatedLibraries: List[VulnerabilityFinding] = Field(default_factory=list, description="Outdated library findings")
+    injectionRisks: List[VulnerabilityFinding] = Field(default_factory=list, description="Injection risk findings")
+    logicErrors: List[VulnerabilityFinding] = Field(default_factory=list, description="Logic error findings")
+    performanceIssues: List[VulnerabilityFinding] = Field(default_factory=list, description="Performance issue findings")
+    recommendedFixes: List[str] = Field(default_factory=list, description="Aggregated recommended fixes")
+    explanation: str = Field(default="", description="Overall explanation")
+
+
 class CodeVulnerabilitySubScore(BaseModel):
     """Schema for code vulnerability auditor sub-score metrics."""
 
@@ -319,6 +529,9 @@ class CodeVulnerabilitySubScore(BaseModel):
     injectionRisks: float = Field(..., ge=0, le=100, description="Injection risks percentage (0-100)")
     logicErrors: float = Field(..., ge=0, le=100, description="Logic errors percentage (0-100)")
     performanceIssues: float = Field(..., ge=0, le=100, description="Performance issues percentage (0-100)")
+    codeVulnerabilityDetails: Optional[CodeVulnerabilityDetails] = Field(
+        default=None, description="Detailed vulnerability findings with risk level and recommended fixes"
+    )
 
 
 class DataExtractionAccuracySubScore(BaseModel):
@@ -358,6 +571,15 @@ class MultiJudgeAIReviewSubScore(BaseModel):
     modelCritiques: float = Field(..., ge=0, le=100, description="Model critiques percentage (0-100)")
 
 
+class ReasoningQualitySubScore(BaseModel):
+    """Schema for reasoning quality score sub-score metrics."""
+
+    stepByStepReasoning: int = Field(..., ge=0, le=10, description="Score for step-by-step reasoning quality (0-10)")
+    logicalConsistency: int = Field(..., ge=0, le=10, description="Score for logical consistency (0-10)")
+    missingSteps: int = Field(..., ge=0, le=10, description="Score for missing steps detection (0-10)")
+    wrongLogic: int = Field(..., ge=0, le=10, description="Score for wrong logic detection (0-10)")
+
+
 class ExplainabilitySubScore(BaseModel):
     """Schema for explainability score sub-score metrics."""
 
@@ -392,7 +614,9 @@ class AuditScore(BaseModel):
         BrandConsistencySubScore,
         AIPlagiarismSubScore,
         MultiJudgeAIReviewSubScore,
-        ExplainabilitySubScore
+        ReasoningQualitySubScore,
+        ExplainabilitySubScore,
+        CodeVulnerabilityDetails
     ]] = Field(None, description="Sub-scores for detailed metrics (varies by score type)")
     # Note: isCritical can be computed from value <= 4, so it's redundant and removed
 

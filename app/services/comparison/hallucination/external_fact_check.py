@@ -192,207 +192,95 @@ Extract up to {max_claims} claims. Return ONLY the JSON array, no other text."""
         return []
 
 
-class EvidenceRetriever:
-    """Retrieves evidence from web search using DuckDuckGo."""
 
-    def __init__(self, timeout: int = 10, top_k: int = 5):
-        """Initialize evidence retriever.
+
+class ClaimEnricher:
+    """Enriches claims with context from the full response."""
+
+    async def enrich_claims(self, claims: list[Claim], full_response: str) -> list[Claim]:
+        """Enrich claims with context from the full response.
         
         Args:
-            timeout: Request timeout in seconds
-            top_k: Number of top results to retrieve
-        """
-        self.timeout = timeout
-        self.top_k = top_k
-        self._cache: dict[str, tuple[list[Evidence], float]] = {}
-        self._cache_ttl = 3600  # 1 hour
-
-    async def retrieve_evidence(self, claim: str) -> list[Evidence]:
-        """Retrieve evidence for a claim from web search.
-        
-        Args:
-            claim: Claim text to search for
+            claims: List of extracted claims
+            full_response: Original full response text
             
         Returns:
-            List of Evidence objects
+            List of enriched claims with context
         """
-        # Check cache
-        cache_key = claim.lower().strip()
-        if cache_key in self._cache:
-            cached_results, timestamp = self._cache[cache_key]
-            if time.time() - timestamp < self._cache_ttl:
-                return cached_results
+        if not claims:
+            return claims
         
+        system_prompt = """You are an expert at enriching factual claims with context. Given a list of claims and the full response text, modify each claim to include necessary context so it can be understood independently.
+
+Rules:
+1. If a claim uses pronouns (it, the city, this, etc.), replace them with the actual entity from context
+2. If a claim is vague, add specific details from the response
+3. Keep the core factual content of each claim
+4. Make claims self-contained and clear
+
+Return ONLY valid JSON array with the same structure:
+[
+    {
+        "id": "c1",
+        "claim": "enriched claim with context",
+        "original_span": "original span"
+    }
+]"""
+
+        # Build claims list for prompt
+        claims_text = "\n".join([f"{claim.id}: {claim.claim}" for claim in claims])
+        
+        prompt = f"""Given the following claims extracted from a response, enrich them with context from the full response so they are self-contained and clear.
+
+Full Response:
+{full_response}
+
+Extracted Claims:
+{claims_text}
+
+For each claim:
+- Replace pronouns (it, the city, this, etc.) with actual entities from the response
+- Add necessary context to make the claim clear and verifiable
+- Keep the core factual content
+
+Return ONLY the JSON array with enriched claims, maintaining the same IDs."""
+
         try:
-            evidence = await self._retrieve_duckduckgo(claim)
+            response_text = await _call_openai(prompt, system_prompt=system_prompt)
             
-            # Cache results
-            self._cache[cache_key] = (evidence, time.time())
-            
-            logger.info(
-                "evidence_retrieved",
-                claim=claim[:100],
-                evidence_count=len(evidence),
-                sources=[e.url for e in evidence[:3]],
-            )
-            
-            return evidence
+            # Extract JSON array
+            json_match = re.search(r'\[.*?\]', response_text, re.DOTALL)
+            if json_match:
+                enriched_data = json.loads(json_match.group(0))
+                
+                # Create mapping of enriched claims
+                enriched_map = {item.get("id"): item.get("claim", "") for item in enriched_data}
+                
+                # Update claims with enriched versions
+                enriched_claims = []
+                for claim in claims:
+                    enriched_claim_text = enriched_map.get(claim.id, claim.claim)
+                    enriched_claims.append(Claim(
+                        id=claim.id,
+                        claim=enriched_claim_text,
+                        original_span=claim.original_span,
+                    ))
+                    
+                    if enriched_claim_text != claim.claim:
+                        logger.info(
+                            "claim_enriched",
+                            claim_id=claim.id,
+                            original_claim=claim.claim,
+                            enriched_claim=enriched_claim_text,
+                        )
+                
+                return enriched_claims
         except Exception as e:
-            logger.warning("evidence_retrieval_failed", claim=claim[:100], error=str(e))
-            return []
-
-    async def _retrieve_duckduckgo(self, claim: str) -> list[Evidence]:
-        """Retrieve evidence using DuckDuckGo search.
+            logger.warning("claim_enrichment_failed", error=str(e))
+            # Return original claims if enrichment fails
+            return claims
         
-        Args:
-            claim: Claim text to search for
-            
-        Returns:
-            List of Evidence objects
-        """
-        try:
-            # Import with warning suppression
-            DDGS = None
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    from duckduckgo_search import DDGS as DuckDDGS  # type: ignore[import-untyped, import-not-found]
-                    DDGS = DuckDDGS
-            except ImportError:
-                try:
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        from ddgs import DDGS as DuckDDGS  # type: ignore[import-untyped, import-not-found]
-                        DDGS = DuckDDGS
-                except ImportError:
-                    logger.error("search_library_not_installed", 
-                                hint="Install with: pip install duckduckgo-search")
-                    return []
-            
-            if DDGS is None:
-                return []
-            
-            # Run search in executor
-            loop = asyncio.get_event_loop()
-            
-            def search_sync():
-                """Synchronous search with warning suppression."""
-                import sys
-                import io
-                
-                class StderrFilter:
-                    def __init__(self, original):
-                        self.original = original
-                    
-                    def write(self, text):
-                        if "duckduckgo_search" in text and "renamed" in text:
-                            return
-                        self.original.write(text)
-                    
-                    def flush(self):
-                        self.original.flush()
-                    
-                    def __getattr__(self, name):
-                        return getattr(self.original, name)
-                
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    original_stderr = sys.stderr
-                    try:
-                        sys.stderr = StderrFilter(original_stderr)
-                        with DDGS() as ddgs:
-                            results = list(ddgs.text(
-                                claim,
-                                max_results=self.top_k,
-                                safesearch="moderate"
-                            ))
-                            return results or []
-                    finally:
-                        sys.stderr = original_stderr
-            
-            # Execute search with timeout
-            try:
-                search_results = await asyncio.wait_for(
-                    loop.run_in_executor(None, search_sync),
-                    timeout=self.timeout
-                )
-            except asyncio.TimeoutError:
-                logger.warning("duckduckgo_timeout", claim=claim[:50])
-                return []
-            
-            if not search_results:
-                return []
-            
-            # Process results with quality filtering
-            evidence_list = []
-            rank = 1
-            for result in search_results:
-                url = result.get("href") or result.get("link") or ""
-                title = result.get("title") or ""
-                snippet = result.get("body") or result.get("snippet") or ""
-                
-                if not url or not title:
-                    continue
-                
-                domain = urlparse(url).netloc.lower() if url else ""
-                
-                # Filter out low-quality sources
-                if self._is_low_quality_source(domain, url):
-                    continue
-                
-                evidence_list.append(Evidence(
-                    url=url,
-                    title=title,
-                    snippet=snippet,
-                    domain=domain,
-                    source_rank=rank,
-                ))
-                rank += 1
-                
-                if len(evidence_list) >= self.top_k:
-                    break
-            
-            return evidence_list
-        except Exception as e:
-            logger.error("duckduckgo_error", error=str(e), claim=claim[:50])
-            return []
-    
-    def _is_low_quality_source(self, domain: str, url: str) -> bool:
-        """Check if source is low-quality and should be filtered out.
-        
-        Args:
-            domain: Domain name
-            url: Full URL
-            
-        Returns:
-            True if source should be filtered out
-        """
-        # Blacklisted domains
-        blacklisted_domains = [
-            "zhidao.baidu.com",
-            "baidu.com",
-            "zhihu.com",
-            "sogou.com",
-            "support.google.com",
-            "support.microsoft.com",
-            "help.",
-            "docs.",
-            "forum.",
-        ]
-        
-        # Check domain blacklist
-        for blacklisted in blacklisted_domains:
-            if blacklisted in domain:
-                return True
-        
-        # Filter out support/documentation pages
-        url_lower = url.lower()
-        if any(pattern in url_lower for pattern in ["/support/", "/help/", "/docs/", "/documentation/", "/guide/"]):
-            # Allow Stack Overflow and reputable sources
-            if not any(reputable in domain for reputable in ["stackoverflow.com", "stackexchange.com", "wikipedia.org", "gov", "edu"]):
-                return True
-        
-        return False
+        return claims
 
 
 class LLMFactChecker:
@@ -422,13 +310,14 @@ CRITICAL RULES:
 2. Mark as FALSE if the claim is refuted, contradicted, or insufficient evidence
 3. Be conservative - when in doubt, mark as FALSE
 4. Provide clear explanation of your reasoning
-5. List the domains/websites you would use to verify this claim (e.g., wikipedia.org, nytimes.com, etc.)
+5. List the SPECIFIC PAGE URLs where this information can be found (e.g., https://en.wikipedia.org/wiki/New_York_City, https://www.nytimes.com/article/..., etc.)
+6. Provide actual clickable URLs, not just domain names
 
 Return ONLY valid JSON:
 {
     "is_true": true|false,
     "explanation": "Brief explanation of your reasoning and how you would verify this",
-    "sources_used": ["domain1.com", "domain2.com"]
+    "sources_used": ["https://en.wikipedia.org/wiki/SpecificPage", "https://www.nytimes.com/2020/..."]
 }"""
 
         prompt = f"""Verify the following factual claim using your web knowledge.
@@ -442,9 +331,12 @@ Analyze whether the claim is:
 Provide:
 1. Your verdict (is_true: true or false)
 2. Explanation of your reasoning
-3. List of domains/websites you would use to verify this claim (e.g., wikipedia.org, bbc.com, nytimes.com, etc.)
+3. List of SPECIFIC PAGE URLs where this information can be verified (e.g., https://en.wikipedia.org/wiki/New_York_City, https://www.census.gov/data/..., https://www.nytimes.com/2020/...)
+   - Provide full URLs with paths, not just domains
+   - Use actual URLs where this specific information would be found
+   - Make URLs clickable and specific to the claim
 
-Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (array of domain names)."""
+Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (array of full URLs)."""
 
         try:
             response = await asyncio.wait_for(
@@ -465,17 +357,19 @@ Return ONLY valid JSON with is_true (boolean), explanation, and sources_used (ar
                     explanation = result.get("explanation", "")
                     sources_used = result.get("sources_used", [])
                     
-                    # Validate sources_used are domains (strings)
+                    # Validate sources_used are URLs (strings)
                     valid_sources = []
                     if isinstance(sources_used, list):
                         for source in sources_used:
                             if isinstance(source, str) and source.strip():
-                                # Clean domain (remove http://, https://, www.)
-                                domain = source.strip().lower()
-                                domain = domain.replace("http://", "").replace("https://", "").replace("www.", "")
-                                domain = domain.split("/")[0]  # Remove path
-                                if domain:
-                                    valid_sources.append(domain)
+                                # Ensure it's a valid URL
+                                url = source.strip()
+                                # Add https:// if missing
+                                if not url.startswith(("http://", "https://")):
+                                    url = "https://" + url
+                                # Validate it looks like a URL
+                                if "." in url and ("http://" in url or "https://" in url):
+                                    valid_sources.append(url)
                     
                     logger.info(
                         "claim_verification_complete",
@@ -519,6 +413,7 @@ class ExternalFactCheckScorer:
         self.claim_extractor = ClaimExtractor(
             use_llm=settings.claim_extraction_use_llm,
         )
+        self.claim_enricher = ClaimEnricher()
         self.fact_checker = LLMFactChecker(
             timeout=settings.verification_timeout,
         )
@@ -566,8 +461,13 @@ class ExternalFactCheckScorer:
         
         logger.info("claims_extraction_complete", total_claims=len(claims))
         
-        # Step 2: Verify claims using OpenAI (with concurrency control)
-        logger.info("starting_claim_verification", total_claims=len(claims))
+        # Step 2: Enrich claims with context from full response
+        logger.info("starting_claim_enrichment", total_claims=len(claims))
+        enriched_claims = await self.claim_enricher.enrich_claims(claims, response)
+        logger.info("claims_enrichment_complete", total_claims=len(enriched_claims))
+        
+        # Step 3: Verify enriched claims using OpenAI (with concurrency control)
+        logger.info("starting_claim_verification", total_claims=len(enriched_claims))
         semaphore_verify = asyncio.Semaphore(3)  # Max 3 concurrent verifications
         
         async def verify_claim_safe(claim: Claim) -> tuple[Claim, dict[str, Any]]:
@@ -577,13 +477,14 @@ class ExternalFactCheckScorer:
                 return (claim, verification)
         
         verification_results = await asyncio.gather(
-            *[verify_claim_safe(claim) for claim in claims],
+            *[verify_claim_safe(claim) for claim in enriched_claims],
             return_exceptions=True,
         )
         
         logger.info("claim_verification_complete", total_verifications=len(verification_results))
         
         # Step 4: Process results and compute score
+        # Use original claims for display, but enriched claims were verified
         verified_claims = []
         true_count = 0
         false_count = 0
@@ -626,18 +527,40 @@ class ExternalFactCheckScorer:
             else:
                 false_count += 1
             
-            # Convert sources to schema format (domains from OpenAI)
+            # Convert sources to schema format (URLs from OpenAI)
             from app.domain.schemas import ExternalFactCheckEvidence
-            evidence_schema = [
-                ExternalFactCheckEvidence(
-                    url=f"https://{domain}",  # Construct URL from domain
-                    title=domain,
+            from urllib.parse import urlparse
+            
+            evidence_schema = []
+            for idx, source_url in enumerate(sources_used):
+                # Parse URL to get domain
+                try:
+                    parsed = urlparse(source_url)
+                    domain = parsed.netloc or parsed.path.split("/")[0] if parsed.path else ""
+                    # Remove www. prefix
+                    if domain.startswith("www."):
+                        domain = domain[4:]
+                except:
+                    domain = source_url.split("/")[0] if "/" in source_url else source_url
+                
+                # Extract page title from URL or use domain
+                page_title = domain
+                if "/" in source_url:
+                    # Try to extract meaningful page name from URL
+                    path_parts = [p for p in source_url.split("/") if p and p not in ["http:", "https:", ""]]
+                    if path_parts:
+                        # Use last meaningful part as title hint
+                        last_part = path_parts[-1].replace("-", " ").replace("_", " ").title()
+                        if len(last_part) > 3:
+                            page_title = f"{domain} - {last_part}"
+                
+                evidence_schema.append(ExternalFactCheckEvidence(
+                    url=source_url,  # Full URL
+                    title=page_title,
                     snippet=explanation[:200] if explanation else "",
                     source_rank=idx + 1,
                     domain=domain,
-                )
-                for idx, domain in enumerate(sources_used)
-            ]
+                ))
             
             # Store explanation in notes (since schema doesn't have explanation field)
             claim_notes = [explanation] if explanation else []
@@ -659,7 +582,7 @@ class ExternalFactCheckScorer:
         
         # Step 5: Compute score (0-100)
         # Simple scoring: percentage of claims that are TRUE
-        total_claims = len(claims)
+        total_claims = len(enriched_claims)
         if total_claims == 0:
             score = 50  # Neutral
         else:
@@ -709,7 +632,7 @@ class ExternalFactCheckScorer:
                         False
                     ),
                 }
-                for claim in claims
+                for claim in enriched_claims
             ],
         )
         

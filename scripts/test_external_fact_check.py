@@ -29,10 +29,21 @@ async def test_claim_extraction():
     extractor_llm = ClaimExtractor(use_llm=True)
     
     response = """
-    New York City has a population of 8.5 million people according to the 2020 census.
-    The city covers an area of 468 square miles.
-    According to recent research, 50% of residents prefer public transportation.
-    In 1624, the city was founded by Dutch settlers.
+    New York City, often referred to as the Big Apple, is the most populous city in the United States. According to the 2020 United States Census, the city has a population of approximately 8.8 million people, making it one of the largest metropolitan areas in the world. The city spans a total area of 302.6 square miles, which includes its five distinct boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island.
+    
+    The city was originally founded in 1624 by Dutch settlers who established a trading post on the southern tip of Manhattan Island. This settlement was initially named New Amsterdam, after the Dutch capital. However, in 1664, the English captured the colony and renamed it New York in honor of the Duke of York, who later became King James II of England.
+    
+    One of the most iconic landmarks in New York City is the Statue of Liberty, which stands on Liberty Island in New York Harbor. This magnificent copper statue, a gift from France to the United States, was dedicated on October 28, 1886. Designed by French sculptor Frédéric Auguste Bartholdi, the statue stands 305 feet tall from the base to the tip of the torch and has become a universal symbol of freedom and democracy.
+    
+    New York City is also home to Central Park, one of the most famous urban parks in the world. The park covers 843 acres in the heart of Manhattan and was designed by Frederick Law Olmsted and Calvert Vaux. It was officially opened to the public in 1858 and has since become a vital green space for millions of residents and tourists.
+    
+    The city's economy is one of the largest in the world, with a gross metropolitan product of over $1.5 trillion as of 2023. Wall Street, located in Lower Manhattan, is considered the financial capital of the world and is home to the New York Stock Exchange, the largest stock exchange by market capitalization.
+    
+    According to a comprehensive 2022 study by the Metropolitan Transportation Authority, approximately 68% of New York City residents use public transportation for their daily commute, making it one of the highest public transit usage rates in the United States. The city's subway system, operated by the MTA, is one of the oldest and most extensive rapid transit systems in the world, with 472 stations across 27 lines.
+    
+    The Empire State Building, completed in 1931, was the world's tallest building for nearly 40 years until the completion of the World Trade Center's North Tower in 1970. Standing at 1,454 feet tall (including its antenna), it remains one of the most recognizable skyscrapers in the world and attracts millions of visitors annually.
+    
+    New York City is also renowned for its cultural institutions. The Metropolitan Museum of Art, founded in 1870, houses over 2 million works of art spanning 5,000 years of world culture. The museum's collection includes everything from ancient Egyptian artifacts to contemporary art, making it one of the largest and most comprehensive art museums in the world.
     """
     
     try:
@@ -81,11 +92,21 @@ async def test_full_scoring():
     
     # Single test response with multiple claims
     test_response = """
-    New York City has a population of 8.5 million people according to the 2020 census.
-    The city covers an area of 468 square miles.
-    New York City was founded in 1624 by Dutch settlers.
-    The Statue of Liberty was dedicated in 1886.
-    According to a 2023 study, 75% of New Yorkers prefer public transportation.
+    New York City, often referred to as the Big Apple, is the most populous city in the United States. According to the 2020 United States Census, the city has a population of approximately 8.8 million people, making it one of the largest metropolitan areas in the world. The city spans a total area of 302.6 square miles, which includes its five distinct boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island.
+    
+    The city was originally founded in 1624 by Dutch settlers who established a trading post on the southern tip of Manhattan Island. This settlement was initially named New Amsterdam, after the Dutch capital. However, in 1664, the English captured the colony and renamed it New York in honor of the Duke of York, who later became King James II of England.
+    
+    One of the most iconic landmarks in New York City is the Statue of Liberty, which stands on Liberty Island in New York Harbor. This magnificent copper statue, a gift from France to the United States, was dedicated on October 28, 1886. Designed by French sculptor Frédéric Auguste Bartholdi, the statue stands 305 feet tall from the base to the tip of the torch and has become a universal symbol of freedom and democracy.
+    
+    New York City is also home to Central Park, one of the most famous urban parks in the world. The park covers 843 acres in the heart of Manhattan and was designed by Frederick Law Olmsted and Calvert Vaux. It was officially opened to the public in 1858 and has since become a vital green space for millions of residents and tourists.
+    
+    The city's economy is one of the largest in the world, with a gross metropolitan product of over $1.5 trillion as of 2023. Wall Street, located in Lower Manhattan, is considered the financial capital of the world and is home to the New York Stock Exchange, the largest stock exchange by market capitalization.
+    
+    According to a comprehensive 2022 study by the Metropolitan Transportation Authority, approximately 68% of New York City residents use public transportation for their daily commute, making it one of the highest public transit usage rates in the United States. The city's subway system, operated by the MTA, is one of the oldest and most extensive rapid transit systems in the world, with 472 stations across 27 lines.
+    
+    The Empire State Building, completed in 1931, was the world's tallest building for nearly 40 years until the completion of the World Trade Center's North Tower in 1970. Standing at 1,454 feet tall (including its antenna), it remains one of the most recognizable skyscrapers in the world and attracts millions of visitors annually.
+    
+    New York City is also renowned for its cultural institutions. The Metropolitan Museum of Art, founded in 1870, houses over 2 million works of art spanning 5,000 years of world culture. The museum's collection includes everything from ancient Egyptian artifacts to contemporary art, making it one of the largest and most comprehensive art museums in the world.
     """
     
     print(f"\nTesting Response:")
@@ -116,11 +137,13 @@ async def test_full_scoring():
                 status_text = "TRUE" if is_true else "FALSE"
                 print(f"      {status_icon} Result: {status_text}")
                 
-                # Sources (domains from OpenAI)
+                # Sources (full URLs from OpenAI)
                 if claim.top_evidence:
                     print(f"      Sources ({len(claim.top_evidence)}):")
                     for j, evidence in enumerate(claim.top_evidence, 1):
-                        print(f"         • {evidence.domain}")
+                        # Show full URL if available, otherwise domain
+                        source_display = evidence.url if evidence.url and evidence.url.startswith("http") else evidence.domain
+                        print(f"         • {source_display}")
                 else:
                     print(f"      Sources: None provided")
                 
@@ -133,6 +156,109 @@ async def test_full_scoring():
         
         if result.notes:
             print(f"\n   Notes: {', '.join(result.notes)}")
+        
+        # Generate .docx report (one-time)
+        try:
+            from docx import Document
+            from docx.shared import Pt, RGBColor, Inches
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from datetime import datetime
+            
+            doc = Document()
+            
+            # Title
+            title = doc.add_heading('External Fact Check Results Summary', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Date
+            date_para = doc.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            date_para.runs[0].font.size = Pt(10)
+            date_para.runs[0].font.italic = True
+            
+            doc.add_paragraph()  # Spacing
+            
+            # Summary Section
+            doc.add_heading('Summary', 1)
+            summary_para = doc.add_paragraph()
+            summary_para.add_run(f"Score: ").bold = True
+            summary_para.add_run(f"{result.score}/100")
+            summary_para.add_run(f"\nCoverage: ").bold = True
+            summary_para.add_run(f"{result.coverage:.1%}")
+            summary_para.add_run(f"\nClaims Verified: ").bold = True
+            summary_para.add_run(f"{len(result.claims)}")
+            summary_para.add_run(f"\nTotal Sources Used: ").bold = True
+            summary_para.add_run(f"{len(result.sources_used)}")
+            
+            doc.add_paragraph()  # Spacing
+            
+            # Claims Section
+            doc.add_heading('Claims Verification Details', 1)
+            
+            for i, claim in enumerate(result.claims, 1):
+                # Claim number and text
+                claim_heading = doc.add_heading(f"Claim {i}", 2)
+                claim_para = doc.add_paragraph(claim.claim)
+                claim_para.style = 'List Paragraph'
+                
+                # Verification result
+                result_para = doc.add_paragraph()
+                is_true = claim.verdict == "SUPPORTED"
+                status_text = "TRUE" if is_true else "FALSE"
+                result_para.add_run("Result: ").bold = True
+                status_run = result_para.add_run(status_text)
+                status_run.bold = True
+                status_run.font.color.rgb = RGBColor(0, 128, 0) if is_true else RGBColor(255, 0, 0)
+                
+                # Sources
+                if claim.top_evidence:
+                    sources_para = doc.add_paragraph()
+                    sources_para.add_run(f"Sources ({len(claim.top_evidence)}):").bold = True
+                    for evidence in claim.top_evidence:
+                        source_url = evidence.url if evidence.url and evidence.url.startswith("http") else f"https://{evidence.domain}"
+                        source_item = doc.add_paragraph(source_url, style='List Bullet')
+                        # Make URL clickable (add hyperlink)
+                        try:
+                            from docx.oxml import OxmlElement
+                            from docx.oxml.ns import qn
+                            hyperlink = source_item._element.get_or_add_hyperlink(source_url)
+                            run = source_item.runs[0] if source_item.runs else source_item.add_run(source_url)
+                            run.font.color.rgb = RGBColor(0, 0, 255)
+                            run.font.underline = True
+                        except:
+                            pass  # If hyperlink fails, just show text
+                else:
+                    no_sources = doc.add_paragraph()
+                    no_sources.add_run("Sources: ").bold = True
+                    no_sources.add_run("None provided")
+                
+                # Explanation
+                if claim.top_evidence and claim.top_evidence[0].snippet:
+                    explanation = claim.top_evidence[0].snippet
+                    expl_para = doc.add_paragraph()
+                    expl_para.add_run("Explanation: ").bold = True
+                    expl_para.add_run(explanation)
+                
+                doc.add_paragraph()  # Spacing between claims
+            
+            # Notes
+            if result.notes:
+                doc.add_heading('Notes', 1)
+                notes_para = doc.add_paragraph(', '.join(result.notes))
+            
+            # Save document
+            output_path = project_root / "external_fact_check_results.docx"
+            doc.save(str(output_path))
+            print(f"\n{'='*60}")
+            print(f"   DOCX REPORT GENERATED")
+            print(f"{'='*60}")
+            print(f"   File saved to: {output_path}")
+            print(f"{'='*60}")
+            
+        except ImportError:
+            print(f"\n[INFO] python-docx not installed. Install with: pip install python-docx")
+        except Exception as e:
+            print(f"\n[WARNING] Could not generate .docx file: {e}")
             
     except Exception as e:
         print(f"   [ERROR] Error: {e}")
