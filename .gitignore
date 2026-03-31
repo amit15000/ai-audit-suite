@@ -151,4 +151,6 @@ var/
 *.sqlite
 *.sqlite3
 object_store/
+tempCodeRunnerFile.py
+~$*.docx
 
